@@ -66,8 +66,40 @@ impl PollHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mio::{Events, Interest, Poll, Token};
+    use mio::Events;
+    use mio::event::Source;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Duration;
+
+    struct TestSource;
+    impl Source for TestSource {
+        fn register(
+            &mut self,
+            _registry: &mio::Registry,
+            _token: Token,
+            _interests: Interest,
+        ) -> std::io::Result<()> {
+            Ok(())
+        }
+
+        fn reregister(
+            &mut self,
+            _registry: &mio::Registry,
+            _token: Token,
+            _interests: Interest,
+        ) -> std::io::Result<()> {
+            Ok(())
+        }
+
+        fn deregister(&mut self, _registry: &mio::Registry) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    impl TestSource {
+        fn new() -> Self {
+            TestSource
+        }
+    }
 
     #[test]
     fn test_poll() {
@@ -76,5 +108,81 @@ mod tests {
         poller
             .poll(&mut events, Some(Duration::from_secs(1)))
             .unwrap();
+    }
+
+    #[test]
+    fn test_wake() {
+        let poller = PollHandle::new().unwrap();
+        assert!(poller.wake().is_ok());
+    }
+
+    #[test]
+    fn test_register_unregister() {
+        let poller = PollHandle::new().unwrap();
+        let mut source = TestSource::new();
+        let token = Token(1);
+
+        struct TestHandler {
+            called: Arc<AtomicBool>,
+        }
+
+        impl Eventhandler for TestHandler {
+            fn handle_event(&self, _event: &mio::event::Event) {
+                self.called.store(true, Ordering::SeqCst);
+            }
+        }
+
+        let handler = TestHandler {
+            called: Arc::new(AtomicBool::new(false)),
+        };
+
+        assert!(
+            poller
+                .register(&mut source, token, Interest::READABLE, handler)
+                .is_ok(),
+            "Failed to register source"
+        );
+
+        assert!(
+            poller.registery.lock().unwrap().contains_key(&token),
+            "Token not found in registry"
+        );
+
+        poller.unregister(token);
+
+        assert!(
+            !poller.registery.lock().unwrap().contains_key(&token),
+            "Token should have been removed from registry"
+        );
+    }
+
+    #[test]
+    fn test_multiple_handlers() {
+        let poller = PollHandle::new().unwrap();
+        let mut src1 = TestSource::new();
+        let mut src2 = TestSource::new();
+
+        struct NoopHandler;
+        impl Eventhandler for NoopHandler {
+            fn handle_event(&self, _event: &mio::event::Event) {}
+        }
+
+        assert!(
+            poller
+                .register(&mut src1, Token(1), Interest::READABLE, NoopHandler)
+                .is_ok(),
+            "Failed to register src1"
+        );
+        assert!(
+            poller
+                .register(&mut src2, Token(2), Interest::WRITABLE, NoopHandler)
+                .is_ok(),
+            "Failed to register src2"
+        );
+
+        let registry = poller.registery.lock().unwrap();
+        assert_eq!(registry.len(), 2);
+        assert!(registry.contains_key(&Token(1)), "Failed to find src1");
+        assert!(registry.contains_key(&Token(2)), "Failed to find src2");
     }
 }
