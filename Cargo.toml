@@ -1,6 +1,6 @@
 [package]
 name = "mill-io"
-authors = ["Mohamed Emad <hulxxv@gmail.com>"]
+authors = ["Citadel-tech","Mohamed Emad <hulxxv@gmail.com>"]
 description = "A generic event loop implementation built on mio."
 version = "0.0.1-alpha"
 edition = "2024"
