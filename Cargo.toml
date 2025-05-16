@@ -10,5 +10,4 @@ license-file = "LICENSE"
 keywords = ["io", "event-loop", "mio", "async", "networking", "reactor"]
 
 [dependencies]
-anyhow = "1.0.98"
 mio = { version = "1.0.3", features = ["os-poll"] }
