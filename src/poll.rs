@@ -40,14 +40,28 @@ impl PollHandle {
         S: mio::event::Source + ?Sized,
     {
         src.register(self.poller.registry(), token, interest)?;
-        let mut registery = self.registery.lock().unwrap();
-        registery.insert(token, HandlerEntry::new(handler, interest));
+
+        match self.registery.lock() {
+            Ok(mut registery) => {
+                registery.insert(token, HandlerEntry::new(handler, interest));
+            }
+            Err(_) => {
+                return Err("Failed to lock registery".into());
+            }
+        }
         Ok(())
     }
 
-    pub fn unregister(&self, token: Token) {
-        let mut registery = self.registery.lock().unwrap();
-        registery.remove(&token);
+    pub fn unregister(&self, token: Token) -> Result<(), Box<dyn Error>> {
+        match self.registery.lock() {
+            Ok(mut registery) => {
+                registery.remove(&token);
+            }
+            Err(_) => {
+                return Err("Failed to lock registery".into());
+            }
+        }
+        Ok(())
     }
 
     pub fn poll(
@@ -149,7 +163,10 @@ mod tests {
             "Token not found in registry"
         );
 
-        poller.unregister(token);
+        assert!(
+            poller.unregister(token).is_ok(),
+            "Failed to unregister source"
+        );
 
         assert!(
             !poller.registery.lock().unwrap().contains_key(&token),
