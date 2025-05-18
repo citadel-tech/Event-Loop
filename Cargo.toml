@@ -1,0 +1,13 @@
+[package]
+name = "mill-io"
+authors = ["Citadel-tech","Mohamed Emad <hulxxv@gmail.com>"]
+description = "A generic event loop implementation built on mio."
+version = "0.0.1-alpha"
+edition = "2024"
+repository = "https://github.com/citadel-tech/Event-Loop"
+license = "Apache-2.0"
+license-file = "LICENSE"
+keywords = ["io", "event-loop", "mio", "async", "networking", "reactor"]
+
+[dependencies]
+mio = { version = "1.0.3", features = ["os-poll"] }
