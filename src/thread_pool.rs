@@ -1,0 +1,91 @@
+use std::{
+    error::Error,
+    sync::{
+        Arc, Mutex,
+        mpsc::{self, Receiver},
+    },
+    thread::{JoinHandle, spawn},
+};
+
+type Task = Box<dyn FnOnce() + Send + 'static>;
+
+enum WorkerMessage {
+    Task(Task),
+    Terminate,
+}
+
+pub struct ThreadPool {
+    workers: Vec<Worker>,
+    sender: mpsc::Sender<WorkerMessage>,
+}
+
+impl ThreadPool {
+    pub fn new(capacity: usize) -> Self {
+        let (sender, receiver) = mpsc::channel::<WorkerMessage>();
+        let receiver = Arc::new(Mutex::new(receiver));
+
+        println!("Thread pool created with {} workers", capacity);
+        let workers: Vec<Worker> = (0..capacity)
+            .map(|id| Worker::new(id, Arc::clone(&receiver)))
+            .collect();
+
+        Self { workers, sender }
+    }
+
+    pub fn exec<F>(&self, task: F) -> Result<(), Box<dyn Error>>
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        Ok(self.sender.send(WorkerMessage::Task(Box::new(task)))?)
+    }
+
+    pub fn workers_len(&self) -> usize {
+        self.workers.len()
+    }
+}
+
+impl Drop for ThreadPool {
+    fn drop(&mut self) {
+        self.workers.iter().for_each(|_| {
+            let _ = self.sender.send(WorkerMessage::Terminate);
+        });
+        self.workers.iter_mut().for_each(|worker| {
+            if let Some(t) = worker.take_thread() {
+                t.join().unwrap();
+            }
+        });
+    }
+}
+
+struct Worker {
+    id: usize,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl Worker {
+    pub fn new(id: usize, reciever: Arc<Mutex<mpsc::Receiver<WorkerMessage>>>) -> Self {
+        let thread = Some(spawn(move || {
+            loop {
+                let task = {
+                    let receiver = reciever.lock().unwrap();
+                    if let Ok(message) = receiver.recv() {
+                        match message {
+                            WorkerMessage::Task(task) => task,
+                            WorkerMessage::Terminate => break,
+                        }
+                    } else {
+                        break;
+                    }
+                };
+
+                task();
+            }
+        }));
+
+        Self { id, thread }
+    }
+
+    pub fn take_thread(&mut self) -> Option<JoinHandle<()>> {
+        self.thread.take()
+    }
+}
