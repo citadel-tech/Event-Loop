@@ -89,3 +89,68 @@ impl Worker {
         self.thread.take()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        sync::atomic::{AtomicUsize, Ordering},
+        time::Duration,
+    };
+
+    use super::*;
+
+    #[test]
+    fn test_thread_pool_creation() {
+        let pool = ThreadPool::new(4);
+        assert_eq!(pool.workers_len(), 4);
+    }
+
+    #[test]
+    fn test_task_execution() {
+        let pool = ThreadPool::new(2);
+        let counter = Arc::new(AtomicUsize::new(0));
+        let counter_clone = counter.clone();
+
+        pool.exec(move || {
+            counter_clone.fetch_add(1, Ordering::SeqCst);
+        })
+        .unwrap();
+
+        std::thread::sleep(Duration::from_millis(100));
+        assert_eq!(counter.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn test_multiple_tasks() {
+        let pool = ThreadPool::new(4);
+        let counter = Arc::new(AtomicUsize::new(0));
+
+        for _ in 0..10 {
+            let counter_clone = counter.clone();
+            pool.exec(move || {
+                counter_clone.fetch_add(1, Ordering::SeqCst);
+            })
+            .unwrap();
+        }
+
+        std::thread::sleep(Duration::from_millis(200));
+        assert_eq!(counter.load(Ordering::SeqCst), 10);
+    }
+
+    #[test]
+    fn test_pool_cleanup() {
+        let counter = Arc::new(AtomicUsize::new(0));
+        {
+            let pool = ThreadPool::new(2);
+            let counter_clone = counter.clone();
+
+            pool.exec(move || {
+                std::thread::sleep(Duration::from_millis(50));
+                counter_clone.fetch_add(1, Ordering::SeqCst);
+            })
+            .unwrap();
+        }
+
+        assert_eq!(counter.load(Ordering::SeqCst), 1);
+    }
+}

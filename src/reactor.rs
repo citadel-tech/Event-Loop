@@ -67,3 +67,140 @@ impl Reactor {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use mio::{Interest, Token, event::Source};
+
+    use super::*;
+    use crate::handler::*;
+    use std::sync::{Arc, Mutex};
+
+    struct TestSource;
+    impl Source for TestSource {
+        fn register(
+            &mut self,
+            _registry: &mio::Registry,
+            _token: Token,
+            _interests: Interest,
+        ) -> std::io::Result<()> {
+            Ok(())
+        }
+
+        fn reregister(
+            &mut self,
+            _registry: &mio::Registry,
+            _token: Token,
+            _interests: Interest,
+        ) -> std::io::Result<()> {
+            Ok(())
+        }
+
+        fn deregister(&mut self, _registry: &mio::Registry) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    impl TestSource {
+        fn new() -> Self {
+            TestSource
+        }
+    }
+
+    #[derive(Clone)]
+    struct TestHandler {
+        counter: Arc<Mutex<usize>>,
+    }
+
+    impl EventHandler for TestHandler {
+        fn handle_event(&self, _event: &Event) {
+            let mut count = self.counter.lock().unwrap();
+            *count += 1;
+        }
+    }
+
+    #[test]
+    fn test_reactor_creation() {
+        let reactor = Reactor::new(4);
+        assert!(reactor.is_ok());
+    }
+
+    #[test]
+    fn test_reactor_start_stop() {
+        let reactor = Arc::new(Mutex::new(Reactor::new(4).unwrap()));
+
+        let reactor_clone = Arc::clone(&reactor);
+        println!("running");
+        let handle = std::thread::spawn(move || {
+            println!("running");
+            reactor_clone.lock().unwrap().run().unwrap();
+        });
+
+        std::thread::sleep(Duration::from_millis(100));
+        reactor.lock().unwrap().shutdown();
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn test_event_dispatch() {
+        let mut reactor = Reactor::new(2).unwrap();
+        let counter = Arc::new(Mutex::new(0));
+        let mut source = TestSource;
+
+        let handler = TestHandler {
+            counter: counter.clone(),
+        };
+
+        let token = Token(1);
+
+        reactor
+            .poll_handle
+            .register(&mut source, token, Interest::READABLE, handler)
+            .unwrap();
+
+        let _ = reactor.poll_handle.poll(&mut reactor.events, None).unwrap();
+        for event in reactor.events.iter() {
+            reactor.dispatch_event(event.clone()).unwrap();
+        }
+
+        std::thread::sleep(Duration::from_millis(100));
+        assert_eq!(*counter.lock().unwrap(), 1);
+    }
+
+    #[test]
+    fn test_multiple_events() {
+        let mut reactor = Reactor::new(4).unwrap();
+        let counter = Arc::new(Mutex::new(0));
+        let mut source = TestSource;
+
+        for i in 0..3 {
+            let handler = TestHandler {
+                counter: counter.clone(),
+            };
+
+            let token = Token(i);
+            reactor
+                .poll_handle
+                .register(
+                    &mut source,
+                    token,
+                    Interest::READABLE | Interest::WRITABLE,
+                    handler.clone(),
+                )
+                .unwrap();
+
+            reactor
+                .poll_handle
+                .register(&mut source, token, Interest::READABLE, handler.clone())
+                .unwrap();
+
+            let _ = reactor.poll_handle.poll(&mut reactor.events, None).unwrap();
+        }
+
+        for event in reactor.events.iter() {
+            reactor.dispatch_event(event.clone()).unwrap();
+        }
+
+        std::thread::sleep(Duration::from_millis(200));
+        assert_eq!(*counter.lock().unwrap(), 6);
+    }
+}
