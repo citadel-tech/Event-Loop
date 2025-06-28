@@ -47,6 +47,7 @@ impl Reactor {
     pub fn shutdown(&self) {
         self.running.store(false, Ordering::SeqCst);
         self.poll_handle.wake().unwrap();
+        todo!("UNIMPLEMENTED CORRECTLY");
     }
 
     pub fn dispatch_event(&self, event: Event) -> Result<(), Box<dyn Error>> {
@@ -126,17 +127,20 @@ mod tests {
 
     #[test]
     fn test_reactor_start_stop() {
+        todo!("PANIC ON THE LOCK");
         let reactor = Arc::new(Mutex::new(Reactor::new(4).unwrap()));
 
         let reactor_clone = Arc::clone(&reactor);
         println!("running");
         let handle = std::thread::spawn(move || {
             println!("running");
-            reactor_clone.lock().unwrap().run().unwrap();
+            let mut unlocked = reactor_clone.lock().unwrap();
+            unlocked.run().unwrap();
         });
 
         std::thread::sleep(Duration::from_millis(100));
-        reactor.lock().unwrap().shutdown();
+        let unlocked = reactor.lock().unwrap();
+        unlocked.shutdown();
         handle.join().unwrap();
     }
 
