@@ -1,9 +1,10 @@
+#[cfg(feature = "unstable-mpmc")]
+use std::sync::mpmc;
+#[cfg(not(feature = "unstable-mpmc"))]
+use std::sync::mpsc;
 use std::{
     error::Error,
-    sync::{
-        Arc, Mutex,
-        mpsc::{self, Receiver},
-    },
+    sync::{Arc, Mutex},
     thread::{JoinHandle, spawn},
 };
 
@@ -16,15 +17,27 @@ enum WorkerMessage {
 
 pub struct ThreadPool {
     workers: Vec<Worker>,
+    #[cfg(feature = "unstable-mpmc")]
+    sender: mpmc::Sender<WorkerMessage>,
+    #[cfg(not(feature = "unstable-mpmc"))]
     sender: mpsc::Sender<WorkerMessage>,
 }
 
+#[cfg(feature = "unstable-mpmc")]
+type ChannelReceiver = mpmc::Receiver<WorkerMessage>;
+#[cfg(not(feature = "unstable-mpmc"))]
+type ChannelReceiver = mpsc::Receiver<WorkerMessage>;
+
 impl ThreadPool {
     pub fn new(capacity: usize) -> Self {
+        #[cfg(feature = "unstable-mpmc")]
+        let (sender, receiver) = mpmc::channel::<WorkerMessage>();
+
+        #[cfg(not(feature = "unstable-mpmc"))]
         let (sender, receiver) = mpsc::channel::<WorkerMessage>();
+
         let receiver = Arc::new(Mutex::new(receiver));
 
-        println!("Thread pool created with {} workers", capacity);
         let workers: Vec<Worker> = (0..capacity)
             .map(|id| Worker::new(id, Arc::clone(&receiver)))
             .collect();
@@ -63,7 +76,7 @@ struct Worker {
 }
 
 impl Worker {
-    pub fn new(id: usize, reciever: Arc<Mutex<mpsc::Receiver<WorkerMessage>>>) -> Self {
+    pub fn new(id: usize, reciever: Arc<Mutex<ChannelReceiver>>) -> Self {
         let thread = Some(spawn(move || {
             loop {
                 let task = {

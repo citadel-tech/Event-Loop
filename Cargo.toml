@@ -11,3 +11,8 @@ keywords = ["io", "event-loop", "mio", "async", "networking", "reactor"]
 
 [dependencies]
 mio = { version = "1.0.3", features = ["os-poll", "net"] }
+
+[features]
+default = []
+unstable-mpmc = []
+unstable = ["unstable-mpmc"]
