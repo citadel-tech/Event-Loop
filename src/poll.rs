@@ -1,26 +1,26 @@
 // TODO: add custom error module and use it here
+use mio::{Events, Interest, Poll, Token};
 use std::{
     collections::HashMap,
     error::Error,
-    sync::{Arc, Mutex},
+    sync::{Arc, RwLock},
 };
 
-use mio::{Events, Interest, Poll, Token};
+use crate::handler::{EventHandler, HandlerEntry};
 
-use crate::handler::{Eventhandler, HandlerEntry};
+type Registry = Arc<RwLock<HashMap<Token, HandlerEntry>>>;
 
 pub struct PollHandle {
-    poller: mio::Poll,
-    registery: Arc<Mutex<HashMap<Token, HandlerEntry>>>,
+    poller: RwLock<mio::Poll>,
+    registery: Registry,
     waker: Arc<mio::Waker>,
 }
 
 impl PollHandle {
     pub fn new() -> Result<Self, Box<dyn Error>> {
-        let poller = Poll::new()?;
-        let waker = mio::Waker::new(poller.registry(), Token(0))?;
-        let registery: Arc<Mutex<HashMap<Token, HandlerEntry>>> =
-            Arc::new(Mutex::new(HashMap::new()));
+        let poller = RwLock::new(Poll::new()?);
+        let waker = mio::Waker::new(poller.read().unwrap().registry(), Token(0))?;
+        let registery: Registry = Arc::new(RwLock::new(HashMap::new()));
         Ok(PollHandle {
             poller,
             registery,
@@ -36,45 +36,49 @@ impl PollHandle {
         handler: H,
     ) -> Result<(), Box<dyn Error>>
     where
-        H: Eventhandler + Send + Sync + 'static,
+        H: EventHandler + Send + Sync + 'static,
         S: mio::event::Source + ?Sized,
     {
-        src.register(self.poller.registry(), token, interest)?;
+        src.register(self.poller.read().unwrap().registry(), token, interest)?;
 
-        match self.registery.lock() {
+        match self.registery.write() {
             Ok(mut registery) => {
                 registery.insert(token, HandlerEntry::new(handler, interest));
             }
             Err(_) => {
-                return Err("Failed to lock registery".into());
+                return Err("Failed to write lock registery".into());
             }
         }
         Ok(())
     }
 
     pub fn unregister(&self, token: Token) -> Result<(), Box<dyn Error>> {
-        match self.registery.lock() {
+        match self.registery.write() {
             Ok(mut registery) => {
                 registery.remove(&token);
             }
             Err(_) => {
-                return Err("Failed to lock registery".into());
+                return Err("Failed to write lock registery".into());
             }
         }
         Ok(())
     }
 
-    pub fn poll(
-        &mut self,
-        events: &mut Events,
+    pub fn poll<'a>(
+        &self,
+        events: &'a mut Events,
         timeout: Option<std::time::Duration>,
     ) -> Result<usize, Box<dyn Error>> {
-        self.poller.poll(events, timeout)?;
+        self.poller.write().unwrap().poll(events, timeout)?;
         Ok(events.iter().count())
     }
 
     pub fn wake(&self) -> Result<(), Box<dyn Error>> {
         Ok(self.waker.wake()?)
+    }
+
+    pub fn get_registery(&self) -> Registry {
+        self.registery.clone()
     }
 }
 
@@ -141,7 +145,7 @@ mod tests {
             called: Arc<AtomicBool>,
         }
 
-        impl Eventhandler for TestHandler {
+        impl EventHandler for TestHandler {
             fn handle_event(&self, _event: &mio::event::Event) {
                 self.called.store(true, Ordering::SeqCst);
             }
@@ -159,7 +163,7 @@ mod tests {
         );
 
         assert!(
-            poller.registery.lock().unwrap().contains_key(&token),
+            poller.registery.read().unwrap().contains_key(&token),
             "Token not found in registry"
         );
 
@@ -169,7 +173,7 @@ mod tests {
         );
 
         assert!(
-            !poller.registery.lock().unwrap().contains_key(&token),
+            !poller.registery.read().unwrap().contains_key(&token),
             "Token should have been removed from registry"
         );
     }
@@ -181,7 +185,7 @@ mod tests {
         let mut src2 = TestSource::new();
 
         struct NoopHandler;
-        impl Eventhandler for NoopHandler {
+        impl EventHandler for NoopHandler {
             fn handle_event(&self, _event: &mio::event::Event) {}
         }
 
@@ -198,7 +202,7 @@ mod tests {
             "Failed to register src2"
         );
 
-        let registry = poller.registery.lock().unwrap();
+        let registry = poller.registery.read().unwrap();
         assert_eq!(registry.len(), 2);
         assert!(registry.contains_key(&Token(1)), "Failed to find src1");
         assert!(registry.contains_key(&Token(2)), "Failed to find src2");
