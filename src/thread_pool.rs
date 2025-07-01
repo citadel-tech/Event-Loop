@@ -1,7 +1,7 @@
 #[cfg(feature = "unstable-mpmc")]
-use std::sync::mpmc;
+use std::sync::mpmc as channel;
 #[cfg(not(feature = "unstable-mpmc"))]
-use std::sync::mpsc;
+use std::sync::mpsc as channel;
 use std::{
     error::Error,
     sync::{Arc, Mutex},
@@ -17,24 +17,14 @@ enum WorkerMessage {
 
 pub struct ThreadPool {
     workers: Vec<Worker>,
-    #[cfg(feature = "unstable-mpmc")]
-    sender: mpmc::Sender<WorkerMessage>,
-    #[cfg(not(feature = "unstable-mpmc"))]
-    sender: mpsc::Sender<WorkerMessage>,
+    sender: channel::Sender<WorkerMessage>,
 }
 
-#[cfg(feature = "unstable-mpmc")]
-type ChannelReceiver = mpmc::Receiver<WorkerMessage>;
-#[cfg(not(feature = "unstable-mpmc"))]
-type ChannelReceiver = mpsc::Receiver<WorkerMessage>;
+type ChannelReceiver = channel::Receiver<WorkerMessage>;
 
 impl ThreadPool {
     pub fn new(capacity: usize) -> Self {
-        #[cfg(feature = "unstable-mpmc")]
-        let (sender, receiver) = mpmc::channel::<WorkerMessage>();
-
-        #[cfg(not(feature = "unstable-mpmc"))]
-        let (sender, receiver) = mpsc::channel::<WorkerMessage>();
+        let (sender, receiver) = channel::channel::<WorkerMessage>();
 
         let receiver = Arc::new(Mutex::new(receiver));
 
