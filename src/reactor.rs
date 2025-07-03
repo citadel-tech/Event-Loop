@@ -14,7 +14,7 @@ const EVENTS_CAPACITY: usize = 1024;
 const POLL_TIMEOUT_MS: u64 = 150;
 
 pub struct Reactor {
-    poll_handle: PollHandle,
+    pub(crate) poll_handle: PollHandle,
     events: Arc<RwLock<Events>>,
     pool: ThreadPool,
     running: AtomicBool,
