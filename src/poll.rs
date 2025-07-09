@@ -56,7 +56,7 @@ impl PollHandle {
     where
         S: mio::event::Source + ?Sized,
     {
-        self.poller.write().unwrap().registry().deregister(source);
+        self.poller.write().unwrap().registry().deregister(source)?;
 
         Ok(())
     }
