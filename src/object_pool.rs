@@ -5,10 +5,11 @@ use std::sync::mpsc as channel;
 use std::sync::{Arc, Mutex};
 const IO_BUFFER_SIZE: usize = 8192;
 
+#[derive(Clone)]
 pub struct ObjectPool<T> {
     sender: channel::Sender<T>,
     receiver: Arc<Mutex<channel::Receiver<T>>>,
-    create_fn: Box<dyn Fn() -> T + Send + Sync>,
+    create_fn: Arc<dyn Fn() -> T + Send + Sync>,
 }
 
 impl<T: Send + 'static> ObjectPool<T> {
@@ -19,13 +20,13 @@ impl<T: Send + 'static> ObjectPool<T> {
         let (sender, receiver) = channel::channel();
 
         for _ in 0..initial_size {
-            sender.send(create_fn()).unwrap();
+            sender.send(create_fn()).expect("Failed to initialize ObjectPool");
         }
 
         Self {
             sender,
             receiver: Arc::new(Mutex::new(receiver)),
-            create_fn: Box::new(create_fn),
+            create_fn: Arc::new(create_fn),
         }
     }
 
@@ -56,6 +57,16 @@ impl<T: Send + 'static> ObjectPool<T> {
 pub struct PooledObject<T> {
     object: Option<T>,
     pool_sender: channel::Sender<T>,
+}
+
+impl<T> PooledObject<T> {
+    pub fn as_ref(&self) -> &T {
+        self.object.as_ref().expect("PooledObject is empty")
+    }
+
+    pub fn as_mut(&mut self) -> &mut T {
+        self.object.as_mut().expect("PooledObject is empty")
+    }
 }
 
 impl<T> Drop for PooledObject<T> {
