@@ -52,15 +52,12 @@ impl PollHandle {
         Ok(())
     }
 
-    pub fn unregister(&self, token: Token) -> Result<(), Box<dyn Error>> {
-        match self.registery.write() {
-            Ok(mut registery) => {
-                registery.remove(&token);
-            }
-            Err(_) => {
-                return Err("Failed to write lock registery".into());
-            }
-        }
+    pub fn deregister<S>(&self, source: &mut S) -> Result<(), Box<dyn Error>>
+    where
+        S: mio::event::Source + ?Sized,
+    {
+        self.poller.write().unwrap().registry().deregister(source);
+
         Ok(())
     }
 
@@ -168,7 +165,7 @@ mod tests {
         );
 
         assert!(
-            poller.unregister(token).is_ok(),
+            poller.deregister(&mut source).is_ok(),
             "Failed to unregister source"
         );
 
