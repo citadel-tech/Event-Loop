@@ -34,7 +34,6 @@ impl Reactor {
         self.running.store(true, Ordering::SeqCst);
 
         while self.running.load(Ordering::SeqCst) {
-            println!("{}", self.running.load(Ordering::SeqCst));
             let _ = self.poll_handle.poll(
                 &mut self.events.write().unwrap(),
                 Some(Duration::from_millis(POLL_TIMEOUT_MS)),
@@ -56,19 +55,19 @@ impl Reactor {
 
     pub fn dispatch_event(&self, event: Event) -> Result<(), Box<dyn Error>> {
         let token = event.token();
+        let mut event = event;
 
         let registry = self.poll_handle.get_registery();
 
         self.pool.exec(move || {
             let registry = registry.read().unwrap();
             let entry = registry.get(&token);
-            let e = entry.is_some();
 
             if let Some(entry) = entry {
                 if (entry.interest.is_readable() && event.is_readable())
                     || (entry.interest.is_writable() && event.is_writable())
                 {
-                    entry.handler.handle_event(&event);
+                    entry.handler.handle_event(&mut event);
                 }
             }
         })

@@ -1,5 +1,4 @@
-#![feature(mpmc_channel)]
-
+#![cfg_attr(feature = "unstable-mpmc", feature(mpmc_channel))]
 use std::error::Error;
 
 use mio::{Interest, Token};
@@ -38,7 +37,14 @@ impl EventLoop {
             .register(source, token, interests, handler)
     }
 
-    pub fn run(&mut self) -> Result<(), Box<dyn Error>> {
+    pub fn deregister<S>(&self, source: &mut S) -> Result<(), Box<dyn Error>>
+    where
+        S: mio::event::Source + ?Sized,
+    {
+        self.reactor.poll_handle.deregister(source)
+    }
+
+    pub fn run(&self) -> Result<(), Box<dyn Error>> {
         self.reactor.run()
     }
 
