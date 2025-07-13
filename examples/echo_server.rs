@@ -106,7 +106,6 @@ impl EventHandler for EchoServerHandler {
     }
 }
 
-#[derive(Debug)]
 pub struct ClientHandler {
     connections: Arc<Mutex<HashMap<Token, TcpStream>>>,
     token: Token,
@@ -115,7 +114,6 @@ pub struct ClientHandler {
 
 impl EventHandler for ClientHandler {
     fn handle_event(&self, event: &mio::event::Event) {
-        println!("client is Handling event for client: {:?}", self);
         let mut connections = self.connections.lock().unwrap();
         if let Some(stream) = connections.get_mut(&self.token) {
             if event.is_readable() {
