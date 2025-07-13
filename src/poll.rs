@@ -2,11 +2,13 @@
 use mio::{Events, Interest, Poll, Token};
 use std::{
     collections::HashMap,
-    error::Error,
     sync::{Arc, RwLock},
 };
 
-use crate::handler::{EventHandler, HandlerEntry};
+use crate::{
+    error::Result,
+    handler::{EventHandler, HandlerEntry},
+};
 
 type Registry = Arc<RwLock<HashMap<Token, HandlerEntry>>>;
 
@@ -17,7 +19,7 @@ pub struct PollHandle {
 }
 
 impl PollHandle {
-    pub fn new() -> Result<Self, Box<dyn Error>> {
+    pub fn new() -> Result<Self> {
         let poller = RwLock::new(Poll::new()?);
         let waker = mio::Waker::new(poller.read().unwrap().registry(), Token(0))?;
         let registery: Registry = Arc::new(RwLock::new(HashMap::new()));
@@ -34,7 +36,7 @@ impl PollHandle {
         token: Token,
         interest: Interest,
         handler: H,
-    ) -> Result<(), Box<dyn Error>>
+    ) -> Result<()>
     where
         H: EventHandler + Send + Sync + 'static,
         S: mio::event::Source + ?Sized,
@@ -52,7 +54,7 @@ impl PollHandle {
         Ok(())
     }
 
-    pub fn deregister<S>(&self, source: &mut S) -> Result<(), Box<dyn Error>>
+    pub fn deregister<S>(&self, source: &mut S) -> Result<()>
     where
         S: mio::event::Source + ?Sized,
     {
@@ -65,12 +67,12 @@ impl PollHandle {
         &self,
         events: &'a mut Events,
         timeout: Option<std::time::Duration>,
-    ) -> Result<usize, Box<dyn Error>> {
+    ) -> Result<usize> {
         self.poller.write().unwrap().poll(events, timeout)?;
         Ok(events.iter().count())
     }
 
-    pub fn wake(&self) -> Result<(), Box<dyn Error>> {
+    pub fn wake(&self) -> Result<()> {
         Ok(self.waker.wake()?)
     }
 

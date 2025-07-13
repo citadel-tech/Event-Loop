@@ -1,5 +1,4 @@
 use std::{
-    error::Error,
     sync::{
         Arc, RwLock,
         atomic::{AtomicBool, Ordering},
@@ -7,39 +6,54 @@ use std::{
     time::Duration,
 };
 
-use crate::{poll::PollHandle, thread_pool::ThreadPool};
+use crate::{error::Result, poll::PollHandle, thread_pool::ThreadPool};
 use mio::{Events, event::Event};
 
-const EVENTS_CAPACITY: usize = 1024;
-const POLL_TIMEOUT_MS: u64 = 150;
+pub const DEFAULT_EVENTS_CAPACITY: usize = 1024;
+pub const DEFAULT_POLL_TIMEOUT_MS: u64 = 150;
 
 pub struct Reactor {
     pub(crate) poll_handle: PollHandle,
     events: Arc<RwLock<Events>>,
     pool: ThreadPool,
     running: AtomicBool,
+    poll_timeout_ms: u64,
+}
+
+impl Default for Reactor {
+    fn default() -> Self {
+        Self {
+            poll_handle: PollHandle::new().unwrap(),
+            events: Arc::new(RwLock::new(Events::with_capacity(DEFAULT_EVENTS_CAPACITY))),
+            pool: ThreadPool::default(),
+            running: AtomicBool::new(false),
+            poll_timeout_ms: DEFAULT_POLL_TIMEOUT_MS,
+        }
+    }
 }
 
 impl Reactor {
-    pub fn new(pool_size: usize) -> Result<Self, Box<dyn Error>> {
+    pub fn new(pool_size: usize, events_capacity: usize, poll_timeout_ms: u64) -> Result<Self> {
         Ok(Self {
             poll_handle: PollHandle::new()?,
-            events: Arc::new(RwLock::new(Events::with_capacity(EVENTS_CAPACITY))),
+            events: Arc::new(RwLock::new(Events::with_capacity(events_capacity))),
             pool: ThreadPool::new(pool_size),
             running: AtomicBool::new(false),
+            poll_timeout_ms,
         })
     }
 
-    pub fn run(&self) -> Result<(), Box<dyn Error>> {
+    pub fn run(&self) -> Result<()> {
         self.running.store(true, Ordering::SeqCst);
 
         while self.running.load(Ordering::SeqCst) {
             let _ = self.poll_handle.poll(
                 &mut self.events.write().unwrap(),
-                Some(Duration::from_millis(POLL_TIMEOUT_MS)),
+                Some(Duration::from_millis(self.poll_timeout_ms)),
             )?;
 
             for event in self.events.read().unwrap().iter() {
+                println!("Dispatching event {event:?}...");
                 self.dispatch_event(event.clone())?;
             }
         }
@@ -53,7 +67,7 @@ impl Reactor {
         }
     }
 
-    pub fn dispatch_event(&self, event: Event) -> Result<(), Box<dyn Error>> {
+    pub fn dispatch_event(&self, event: Event) -> Result<()> {
         let token = event.token();
         let mut event = event;
 
@@ -115,7 +129,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn test_reactor_start_stop() {
-        let reactor = Arc::new(Reactor::new(4).unwrap());
+        let reactor = Arc::new(Reactor::default());
         let shutdown_handle = reactor.get_shutdown_handle();
 
         let reactor_clone = Arc::clone(&reactor);
@@ -134,7 +148,8 @@ mod tests {
     fn test_with_pipe() -> std::io::Result<()> {
         use mio::net::UnixStream;
 
-        let reactor = Arc::new(Reactor::new(2).unwrap());
+        let reactor =
+            Arc::new(Reactor::new(2, DEFAULT_EVENTS_CAPACITY, DEFAULT_POLL_TIMEOUT_MS).unwrap());
         let counter = Arc::new(Mutex::new(0));
         let condition = Arc::new(Condvar::new());
 

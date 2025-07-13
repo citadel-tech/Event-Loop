@@ -1,11 +1,14 @@
-use mill_io::{EventHandler, EventLoop, ObjectPool, PooledObject};
+use mill_io::{
+    EventHandler, EventLoop, ObjectPool, PooledObject,
+    error::Result,
+    reactor::{DEFAULT_EVENTS_CAPACITY, DEFAULT_POLL_TIMEOUT_MS},
+};
 use mio::{
     Interest, Token,
     net::{TcpListener, TcpStream},
 };
 use std::{
     collections::HashMap,
-    error::Error,
     io::{self, Read, Write},
     net::SocketAddr,
     sync::{Arc, Mutex},
@@ -35,7 +38,7 @@ pub struct EchoServerHandler {
 }
 
 impl EchoServerHandler {
-    pub fn new(listener: Arc<Mutex<TcpListener>>) -> Result<Self, Box<dyn Error>> {
+    pub fn new(listener: Arc<Mutex<TcpListener>>) -> Result<Self> {
         Ok(EchoServerHandler {
             listener,
             connections: Arc::new(Mutex::new(HashMap::new())),
@@ -50,7 +53,7 @@ impl EchoServerHandler {
         connections: Arc<Mutex<HashMap<Token, TcpStream>>>,
         token_generator: &Mutex<NextToken>,
         buffer_pool: &ObjectPool<Vec<u8>>,
-    ) -> Result<(), Box<dyn Error>> {
+    ) -> Result<()> {
         loop {
             match self.listener.lock().unwrap().accept() {
                 Ok((mut stream, _)) => {
@@ -86,7 +89,7 @@ impl EventHandler for EchoServerHandler {
     fn handle_event(&self, event: &mio::event::Event) {
         if event.token() == LISTENER {
             if let Err(e) = self.handle_listener_event(
-                &EventLoop::new(1).unwrap(),
+                &EventLoop::new(1, DEFAULT_EVENTS_CAPACITY, DEFAULT_POLL_TIMEOUT_MS).unwrap(),
                 self.connections.clone(),
                 &self.token_generator,
                 &self.buffer_pool,
@@ -122,7 +125,6 @@ impl EventHandler for ClientHandler {
                             self.token,
                             String::from_utf8_lossy(&buffer.as_ref()[..n])
                         );
-                        // Echo data back to the client
                         if let Err(e) = stream.write_all(&buffer.as_ref()[..n]) {
                             eprintln!("Error writing to client {:?}: {}", self.token, e);
                             connections.remove(&self.token);
@@ -141,13 +143,13 @@ impl EventHandler for ClientHandler {
     }
 }
 
-fn main() -> Result<(), Box<dyn Error>> {
+fn main() -> Result<()> {
     let addr: SocketAddr = "127.0.0.1:8080".parse()?;
     let listener = TcpListener::bind(addr)?;
     let listener = Arc::new(Mutex::new(listener));
 
     let server_handler = EchoServerHandler::new(Arc::clone(&listener))?;
-    let event_loop = EventLoop::new(4)?;
+    let event_loop = EventLoop::default();
 
     event_loop.register::<EchoServerHandler, TcpListener>(
         &mut listener.lock().unwrap(),

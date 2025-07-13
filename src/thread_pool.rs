@@ -3,10 +3,13 @@ use std::sync::mpmc as channel;
 #[cfg(not(feature = "unstable-mpmc"))]
 use std::sync::mpsc as channel;
 use std::{
-    error::Error,
     sync::{Arc, Mutex},
     thread::{JoinHandle, spawn},
 };
+
+use crate::error::Result;
+
+pub const DEFAULT_POOL_CAPACITY: usize = 4;
 
 type Task = Box<dyn FnOnce() + Send + 'static>;
 
@@ -22,6 +25,12 @@ pub struct ThreadPool {
 
 type ChannelReceiver = channel::Receiver<WorkerMessage>;
 
+impl Default for ThreadPool {
+    fn default() -> Self {
+        Self::new(DEFAULT_POOL_CAPACITY)
+    }
+}
+
 impl ThreadPool {
     pub fn new(capacity: usize) -> Self {
         let (sender, receiver) = channel::channel::<WorkerMessage>();
@@ -35,7 +44,7 @@ impl ThreadPool {
         Self { workers, sender }
     }
 
-    pub fn exec<F>(&self, task: F) -> Result<(), Box<dyn Error>>
+    pub fn exec<F>(&self, task: F) -> Result<()>
     where
         F: FnOnce() + Send + 'static,
     {
