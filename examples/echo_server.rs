@@ -1,8 +1,4 @@
-use mill_io::{
-    EventHandler, EventLoop, ObjectPool, PooledObject,
-    error::Result,
-    reactor::{DEFAULT_EVENTS_CAPACITY, DEFAULT_POLL_TIMEOUT_MS},
-};
+use mill_io::{EventHandler, EventLoop, ObjectPool, PooledObject, error::Result};
 use mio::{
     Interest, Token,
     net::{TcpListener, TcpStream},
@@ -11,11 +7,13 @@ use std::{
     collections::HashMap,
     io::{self, Read, Write},
     net::SocketAddr,
-    sync::{Arc, Mutex},
+    sync::{Arc, LazyLock, Mutex, RwLock},
 };
 
-const LISTENER: Token = Token(1);
+static EVENT_LOOP: LazyLock<EventLoop> = LazyLock::new(|| EventLoop::default());
 
+const LISTENER: Token = Token(1);
+static CURRENT_TOKEN: LazyLock<RwLock<NextToken>> = LazyLock::new(|| RwLock::new(NextToken::new()));
 struct NextToken(usize);
 
 impl NextToken {
@@ -33,7 +31,6 @@ impl NextToken {
 pub struct EchoServerHandler {
     listener: Arc<Mutex<TcpListener>>,
     connections: Arc<Mutex<HashMap<Token, TcpStream>>>,
-    token_generator: Mutex<NextToken>,
     buffer_pool: ObjectPool<Vec<u8>>,
 }
 
@@ -42,27 +39,27 @@ impl EchoServerHandler {
         Ok(EchoServerHandler {
             listener,
             connections: Arc::new(Mutex::new(HashMap::new())),
-            token_generator: Mutex::new(NextToken::new()),
             buffer_pool: ObjectPool::new(10, || vec![0; 8192]),
         })
     }
 
     fn handle_listener_event(
         &self,
-        event_loop: &EventLoop,
         connections: Arc<Mutex<HashMap<Token, TcpStream>>>,
-        token_generator: &Mutex<NextToken>,
         buffer_pool: &ObjectPool<Vec<u8>>,
     ) -> Result<()> {
         loop {
+            println!("handling listener");
             match self.listener.lock().unwrap().accept() {
                 Ok((mut stream, _)) => {
-                    let mut next_token = token_generator.lock().unwrap();
-                    let token = next_token.next();
+                    println!("handling stream: addr={:#?}", stream.local_addr());
+                    let token = CURRENT_TOKEN.write()?.next();
                     let connections_clone = connections.clone();
                     let buffer_pool_clone = buffer_pool.clone();
 
-                    event_loop.register(
+                    println!("register new event: token={token:?}");
+
+                    EVENT_LOOP.register(
                         &mut stream,
                         token,
                         Interest::READABLE | Interest::WRITABLE,
@@ -72,13 +69,19 @@ impl EchoServerHandler {
                             buffer_pool: buffer_pool_clone,
                         },
                     )?;
+                    println!("{token:?}:inserting...");
                     connections.lock().unwrap().insert(token, stream);
+                    println!("{token:?}: new connection is insterted");
                 }
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                     // No more pending connections
+                    println!("no more pending connections: {e}");
                     break;
                 }
-                Err(e) => return Err(e.into()),
+                Err(e) => {
+                    println!("error: {e:?}");
+                    return Err(e.into());
+                }
             }
         }
         Ok(())
@@ -88,18 +91,19 @@ impl EchoServerHandler {
 impl EventHandler for EchoServerHandler {
     fn handle_event(&self, event: &mio::event::Event) {
         if event.token() == LISTENER {
-            if let Err(e) = self.handle_listener_event(
-                &EventLoop::new(1, DEFAULT_EVENTS_CAPACITY, DEFAULT_POLL_TIMEOUT_MS).unwrap(),
-                self.connections.clone(),
-                &self.token_generator,
-                &self.buffer_pool,
-            ) {
-                eprintln!("Error accepting connection: {}", e);
+            if let Err(e) = self.handle_listener_event(self.connections.clone(), &self.buffer_pool)
+            {
+                eprintln!("error accepting connection: {}", e);
             }
+            println!(
+                "new Connection: len={:#?}",
+                self.connections.lock().unwrap().len()
+            );
         }
     }
 }
 
+#[derive(Debug)]
 pub struct ClientHandler {
     connections: Arc<Mutex<HashMap<Token, TcpStream>>>,
     token: Token,
@@ -108,7 +112,7 @@ pub struct ClientHandler {
 
 impl EventHandler for ClientHandler {
     fn handle_event(&self, event: &mio::event::Event) {
-        println!("Handling event for client: {:?}", self.token);
+        println!("client is Handling event for client: {:?}", self);
         let mut connections = self.connections.lock().unwrap();
         if let Some(stream) = connections.get_mut(&self.token) {
             if event.is_readable() {
@@ -116,7 +120,7 @@ impl EventHandler for ClientHandler {
                 match stream.read(buffer.as_mut()) {
                     Ok(0) => {
                         connections.remove(&self.token);
-                        println!("Client disconnected: {:?}", self.token);
+                        println!("client disconnected: {:?}", self.token);
                     }
                     Ok(n) => {
                         println!(
@@ -149,9 +153,8 @@ fn main() -> Result<()> {
     let listener = Arc::new(Mutex::new(listener));
 
     let server_handler = EchoServerHandler::new(Arc::clone(&listener))?;
-    let event_loop = EventLoop::default();
 
-    event_loop.register::<EchoServerHandler, TcpListener>(
+    EVENT_LOOP.register::<EchoServerHandler, TcpListener>(
         &mut listener.lock().unwrap(),
         LISTENER,
         Interest::READABLE,
@@ -159,7 +162,7 @@ fn main() -> Result<()> {
     )?;
 
     println!("Echo server listening on {}", addr);
-    event_loop.run()?;
+    EVENT_LOOP.run()?;
 
     Ok(())
 }
