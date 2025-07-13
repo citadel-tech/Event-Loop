@@ -1,4 +1,4 @@
-use mio::{Interest, event::Event};
+use mio::{event::Event, Interest};
 
 pub trait EventHandler {
     fn handle_event(&self, event: &Event);

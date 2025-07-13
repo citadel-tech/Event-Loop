@@ -2,7 +2,10 @@
 use std::sync::mpmc as channel;
 #[cfg(not(feature = "unstable-mpmc"))]
 use std::sync::mpsc as channel;
-use std::sync::{Arc, Mutex};
+use std::{
+    fmt::Debug,
+    sync::{Arc, Mutex},
+};
 const IO_BUFFER_SIZE: usize = 8192;
 
 #[derive(Clone)]
@@ -20,7 +23,9 @@ impl<T: Send + 'static> ObjectPool<T> {
         let (sender, receiver) = channel::channel();
 
         for _ in 0..initial_size {
-            sender.send(create_fn()).expect("Failed to initialize ObjectPool");
+            sender
+                .send(create_fn())
+                .expect("Failed to initialize ObjectPool");
         }
 
         Self {

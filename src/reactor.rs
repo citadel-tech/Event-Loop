@@ -1,13 +1,12 @@
+use crate::{error::Result, poll::PollHandle, thread_pool::ThreadPool};
+use mio::{event::Event, Events};
 use std::{
     sync::{
-        Arc, RwLock,
         atomic::{AtomicBool, Ordering},
+        Arc, RwLock,
     },
     time::Duration,
 };
-
-use crate::{error::Result, poll::PollHandle, thread_pool::ThreadPool};
-use mio::{Events, event::Event};
 
 pub const DEFAULT_EVENTS_CAPACITY: usize = 1024;
 pub const DEFAULT_POLL_TIMEOUT_MS: u64 = 150;
