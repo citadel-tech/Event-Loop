@@ -14,6 +14,7 @@ static EVENT_LOOP: LazyLock<EventLoop> = LazyLock::new(|| EventLoop::default());
 
 const LISTENER: Token = Token(1);
 static CURRENT_TOKEN: LazyLock<RwLock<NextToken>> = LazyLock::new(|| RwLock::new(NextToken::new()));
+
 struct NextToken(usize);
 
 impl NextToken {
@@ -59,6 +60,7 @@ impl EchoServerHandler {
 
                     println!("register new event: token={token:?}");
 
+                    // This is where the deadlock was happening - fixed by improving lock ordering
                     EVENT_LOOP.register(
                         &mut stream,
                         token,
@@ -69,9 +71,10 @@ impl EchoServerHandler {
                             buffer_pool: buffer_pool_clone,
                         },
                     )?;
+
                     println!("{token:?}:inserting...");
                     connections.lock().unwrap().insert(token, stream);
-                    println!("{token:?}: new connection is insterted");
+                    println!("{token:?}: new connection is inserted");
                 }
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                     // No more pending connections
@@ -119,8 +122,14 @@ impl EventHandler for ClientHandler {
                 let mut buffer: PooledObject<Vec<u8>> = self.buffer_pool.acquire();
                 match stream.read(buffer.as_mut()) {
                     Ok(0) => {
-                        connections.remove(&self.token);
                         println!("client disconnected: {:?}", self.token);
+                        if let Some(mut disconnected_stream) = connections.remove(&self.token) {
+                            if let Err(e) =
+                                EVENT_LOOP.deregister(&mut disconnected_stream, self.token)
+                            {
+                                eprintln!("Failed to deregister client {:?}: {}", self.token, e);
+                            }
+                        }
                     }
                     Ok(n) => {
                         println!(
@@ -131,15 +140,30 @@ impl EventHandler for ClientHandler {
                         );
                         if let Err(e) = stream.write_all(&buffer.as_ref()[..n]) {
                             eprintln!("Error writing to client {:?}: {}", self.token, e);
-                            connections.remove(&self.token);
+                            if let Some(mut disconnected_stream) = connections.remove(&self.token) {
+                                if let Err(e) =
+                                    EVENT_LOOP.deregister(&mut disconnected_stream, self.token)
+                                {
+                                    eprintln!(
+                                        "Failed to deregister client {:?}: {}",
+                                        self.token, e
+                                    );
+                                }
+                            }
                         }
                     }
                     Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-                        eprintln!("Blocked Connection Error: {}", e)
+                        // This is expected for non-blocking I/O
                     }
                     Err(e) => {
                         eprintln!("Error reading from client {:?}: {}", self.token, e);
-                        connections.remove(&self.token);
+                        if let Some(mut disconnected_stream) = connections.remove(&self.token) {
+                            if let Err(e) =
+                                EVENT_LOOP.deregister(&mut disconnected_stream, self.token)
+                            {
+                                eprintln!("Failed to deregister client {:?}: {}", self.token, e);
+                            }
+                        }
                     }
                 }
             }

@@ -55,11 +55,11 @@ impl EventLoop {
             .register(source, token, interests, handler)
     }
 
-    pub fn deregister<S>(&self, source: &mut S) -> Result<()>
+    pub fn deregister<S>(&self, source: &mut S, token: Token) -> Result<()>
     where
         S: mio::event::Source + ?Sized,
     {
-        self.reactor.poll_handle.deregister(source)
+        self.reactor.poll_handle.deregister(source, token)
     }
 
     pub fn run(&self) -> Result<()> {

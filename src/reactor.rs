@@ -73,14 +73,15 @@ impl Reactor {
         let registry = self.poll_handle.get_registery();
 
         self.pool.exec(move || {
-            let registry = registry.read().unwrap();
             let entry = registry.get(&token);
 
             if let Some(entry) = entry {
-                if (entry.interest.is_readable() && event.is_readable())
-                    || (entry.interest.is_writable() && event.is_writable())
+                let interest = entry.1.interest;
+                let handler = entry.1.handler.as_ref();
+                if (interest.is_readable() && event.is_readable())
+                    || (interest.is_writable() && event.is_writable())
                 {
-                    entry.handler.handle_event(&event);
+                    handler.handle_event(&event);
                 }
             }
         })
