@@ -4,7 +4,7 @@ use std::sync::mpmc as channel;
 use std::sync::mpsc as channel;
 use std::{
     sync::{Arc, Mutex},
-    thread::{JoinHandle, spawn},
+    thread::{Builder, JoinHandle},
 };
 
 use crate::error::Result;
@@ -76,23 +76,30 @@ struct Worker {
 
 impl Worker {
     pub fn new(id: usize, reciever: Arc<Mutex<ChannelReceiver>>) -> Self {
-        let thread = Some(spawn(move || {
-            loop {
-                let task = {
-                    let receiver = reciever.lock().unwrap();
-                    if let Ok(message) = receiver.recv() {
-                        match message {
-                            WorkerMessage::Task(task) => task,
-                            WorkerMessage::Terminate => break,
-                        }
-                    } else {
-                        break;
-                    }
-                };
+        let thread = Some(
+            Builder::new()
+                .name(format!("thread-pool-worker-{id}"))
+                .spawn(move || {
+                    loop {
+                        let task = {
+                            let receiver = reciever.lock().unwrap();
+                            if let Ok(message) = receiver.recv() {
+                                match message {
+                                    WorkerMessage::Task(task) => task,
+                                    WorkerMessage::Terminate => break,
+                                }
+                            } else {
+                                break;
+                            }
+                        };
 
-                task();
-            }
-        }));
+                        println!("Executing task {:?}", std::thread::current());
+
+                        task();
+                    }
+                })
+                .expect(&format!("Couldn't create the worker thread id={id}")),
+        );
 
         Self { id, thread }
     }
