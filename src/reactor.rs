@@ -69,7 +69,6 @@ impl Reactor {
 
     pub fn dispatch_event(&self, event: Event) -> Result<()> {
         let token = event.token();
-        let mut event = event;
 
         let registry = self.poll_handle.get_registery();
 
@@ -81,7 +80,7 @@ impl Reactor {
                 if (entry.interest.is_readable() && event.is_readable())
                     || (entry.interest.is_writable() && event.is_writable())
                 {
-                    entry.handler.handle_event(&mut event);
+                    entry.handler.handle_event(&event);
                 }
             }
         })
