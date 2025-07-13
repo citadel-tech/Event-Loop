@@ -1,9 +1,9 @@
 use crate::{error::Result, poll::PollHandle, thread_pool::ThreadPool};
-use mio::{event::Event, Events};
+use mio::{Events, event::Event};
 use std::{
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc, RwLock,
+        atomic::{AtomicBool, Ordering},
     },
     time::Duration,
 };
@@ -52,7 +52,6 @@ impl Reactor {
             )?;
 
             for event in self.events.read().unwrap().iter() {
-                println!("Dispatching event {event:?}...");
                 self.dispatch_event(event.clone())?;
             }
         }

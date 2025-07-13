@@ -79,22 +79,22 @@ impl Worker {
         let thread = Some(
             Builder::new()
                 .name(format!("thread-pool-worker-{id}"))
-                .spawn(move || loop {
-                    let task = {
-                        let receiver = reciever.lock().unwrap();
-                        if let Ok(message) = receiver.recv() {
-                            match message {
-                                WorkerMessage::Task(task) => task,
-                                WorkerMessage::Terminate => break,
+                .spawn(move || {
+                    loop {
+                        let task = {
+                            let receiver = reciever.lock().unwrap();
+                            if let Ok(message) = receiver.recv() {
+                                match message {
+                                    WorkerMessage::Task(task) => task,
+                                    WorkerMessage::Terminate => break,
+                                }
+                            } else {
+                                break;
                             }
-                        } else {
-                            break;
-                        }
-                    };
+                        };
 
-                    println!("Executing task {:?}", std::thread::current());
-
-                    task();
+                        task();
+                    }
                 })
                 .expect(&format!("Couldn't create the worker thread id={id}")),
         );

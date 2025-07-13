@@ -60,7 +60,6 @@ impl EchoServerHandler {
 
                     println!("register new event: token={token:?}");
 
-                    // This is where the deadlock was happening - fixed by improving lock ordering
                     EVENT_LOOP.register(
                         &mut stream,
                         token,
@@ -72,13 +71,10 @@ impl EchoServerHandler {
                         },
                     )?;
 
-                    println!("{token:?}:inserting...");
                     connections.lock().unwrap().insert(token, stream);
-                    println!("{token:?}: new connection is inserted");
                 }
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                     // No more pending connections
-                    println!("no more pending connections: {e}");
                     break;
                 }
                 Err(e) => {
