@@ -216,12 +216,6 @@ sequenceDiagram
 
 ### 2. Thread Pool Integration
 
-**Why not single-threaded?**
-- I/O events often require CPU-intensive processing
-- Thread pool prevents blocking the main event loop
-- Allows scaling across multiple CPU cores
-- Provides isolation between different event handlers
-
 **Why shared channel over work-stealing queues?**
 - Simpler implementation with good performance
 - Built-in Rust channel optimizations
