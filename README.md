@@ -1,6 +1,3 @@
-
-
-
 A lightweight, production-ready event loop library for Rust that provides efficient non-blocking I/O management without relying on heavyweight async runtimes. mill-io is a reactor-based event loop implementation built on top of `mio` that offers:
 
 - **Runtime-agnostic**: No dependency on Tokio or other async runtimes
@@ -76,15 +73,6 @@ Rather than forcing applications into a specific async ecosystem, Mill-IO provid
 ## Architecture
 
 Mill-IO follows a modular, reactor-based architecture for efficient I/O event handling. For detailed architectural documentation, see [Architecture Guide](./docs/Arch.md).
-
-## Acknowledgments
-
-This project was developed as part of the **Summer of Bitcoin 2025** program. Special thanks to:
-
-- **Citadel-tech** and the **Coinswap** project for providing the use case and requirements
-- **Summer of Bitcoin** organizers and mentors for their guidance
-- The **mio** project for providing the foundational polling abstractions
-- The Rust community for excellent async I/O resources and documentation
 
 ## License
 
