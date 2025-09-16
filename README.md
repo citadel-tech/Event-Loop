@@ -14,14 +14,14 @@ Add Mill-IO to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-mill-io = "1.0.0"
+mill-io = "1.0.1"
 ```
 
 For unstable features:
 
 ```toml
 [dependencies]
-mill-io = { version = "1.0.0", features = ["unstable"] }
+mill-io = { version = "1.0.1", features = ["unstable"] }
 ```
 
 ## Core Components
