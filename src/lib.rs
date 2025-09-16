@@ -39,9 +39,10 @@
 //!
 //! ## Quick Start
 //!
-//! ```rust
+//! ```rust,no_run
 //! use mill_io::{EventLoop, EventHandler};
 //! use mio::{net::TcpListener, Interest, Token};
+//! use std::net::SocketAddr;
 //!
 //! struct EchoHandler;
 //!
@@ -57,7 +58,8 @@
 //!     let event_loop = EventLoop::default();
 //!     
 //!     // Bind to localhost
-//!     let mut listener = TcpListener::bind("127.0.0.1:8080")?;
+//!     let addr: SocketAddr = "127.0.0.1:8080".parse()?;
+//!     let mut listener = TcpListener::bind(addr)?;
 //!
 //!     // Register the listener with a handler
 //!     event_loop.register(
@@ -78,15 +80,18 @@
 //!
 //! ## Advanced Configuration
 //!
-//! ```rust
+//! ```rust,no_run
 //! use mill_io::EventLoop;
 //!
-//! // Create event loop with custom configuration
-//! let event_loop = EventLoop::new(
-//!     8,      // 8 worker threads
-//!     1024,   // Handle up to 1024 events per poll
-//!     100     // 100ms poll timeout
-//! )?;
+//! fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     // Create event loop with custom configuration
+//!     let event_loop = EventLoop::new(
+//!         8,      // 8 worker threads
+//!         1024,   // Handle up to 1024 events per poll
+//!         100     // 100ms poll timeout
+//!     )?;
+//!     Ok(())
+//! }
 //! ```
 //!
 //! ## Module Overview
@@ -158,6 +163,7 @@ pub mod prelude {
 /// ```rust,no_run
 /// use mill_io::{EventLoop, EventHandler};
 /// use mio::{net::TcpListener, Interest, Token};
+/// use std::net::SocketAddr;
 ///
 /// struct MyHandler;
 /// impl EventHandler for MyHandler {
@@ -167,7 +173,8 @@ pub mod prelude {
 /// }
 ///
 /// let event_loop = EventLoop::default();
-/// let mut listener = TcpListener::bind("127.0.0.1:0")?;
+/// let addr: SocketAddr = "127.0.0.1:0".parse()?;
+/// let mut listener = TcpListener::bind(addr)?;
 /// 
 /// event_loop.register(&mut listener, Token(0), Interest::READABLE, MyHandler)?;
 /// event_loop.run()?; // Blocks until stopped
@@ -268,6 +275,7 @@ impl EventLoop {
     /// ```rust,no_run
     /// use mill_io::{EventLoop, EventHandler};
     /// use mio::{net::TcpListener, Interest, Token};
+    /// use std::net::SocketAddr;
     ///
     /// struct ConnectionHandler;
     /// impl EventHandler for ConnectionHandler {
@@ -277,7 +285,8 @@ impl EventLoop {
     /// }
     ///
     /// let event_loop = EventLoop::default();
-    /// let mut listener = TcpListener::bind("0.0.0.0:8080")?;
+    /// let addr: SocketAddr = "0.0.0.0:8080".parse()?;
+    /// let mut listener = TcpListener::bind(addr)?;
     ///
     /// event_loop.register(
     ///     &mut listener,
@@ -324,6 +333,7 @@ impl EventLoop {
     /// ```rust,no_run
     /// use mill_io::{EventLoop, EventHandler};
     /// use mio::{net::TcpListener, Interest, Token};
+    /// use std::net::SocketAddr;
     ///
     /// struct Handler;
     /// impl EventHandler for Handler {
@@ -331,7 +341,8 @@ impl EventLoop {
     /// }
     ///
     /// let event_loop = EventLoop::default();
-    /// let mut listener = TcpListener::bind("127.0.0.1:0")?;
+    /// let addr: SocketAddr = "127.0.0.1:0".parse()?;
+    /// let mut listener = TcpListener::bind(addr)?;
     /// let token = Token(0);
     ///
     /// // Register
@@ -364,25 +375,6 @@ impl EventLoop {
     /// - The polling mechanism fails
     /// - The thread pool encounters a fatal error
     /// - System resources are exhausted
-    ///
-    /// # Examples
-    ///
-    /// ```rust,no_run
-    /// use mill_io::EventLoop;
-    /// use std::thread;
-    /// use std::time::Duration;
-    ///
-    /// let event_loop = EventLoop::default();
-    ///
-    /// // Stop the loop after 5 seconds (in another thread)
-    /// let event_loop_clone = event_loop.clone(); // Note: EventLoop would need to implement Clone
-    /// thread::spawn(move || {
-    ///     thread::sleep(Duration::from_secs(5));
-    ///     // event_loop_clone.stop(); // Would stop the loop
-    /// });
-    ///
-    /// // This blocks until stopped
-    /// // event_loop.run()?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn run(&self) -> Result<()> {
@@ -415,7 +407,8 @@ impl EventLoop {
     ///
     /// // Start event loop in background thread
     /// let handle = thread::spawn(move || {
-    ///     event_loop_clone.run()
+    ///     // In a real application, you would handle the result properly
+    ///     let _ = event_loop_clone.run();
     /// });
     ///
     /// // Stop after some time
@@ -423,8 +416,7 @@ impl EventLoop {
     /// event_loop.stop();
     ///
     /// // Wait for shutdown
-    /// handle.join().unwrap();
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// let _ = handle.join();
     /// ```
     pub fn stop(&self) {
         let shutdown_handler = self.reactor.get_shutdown_handle();
