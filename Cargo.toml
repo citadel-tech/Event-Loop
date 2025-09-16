@@ -1,6 +1,6 @@
 [package]
 name = "mill-io"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 authors = ["Citadel-tech", "Mohamed Emad <hulxxv@gmail.com>"]
 description = "A lightweight event loop library for Rust that provides efficient non-blocking I/O management without relying on heavyweight async runtimes."
@@ -9,7 +9,6 @@ homepage = "https://github.com/citadel-tech/Event-Loop"
 repository = "https://github.com/citadel-tech/Event-Loop"
 readme = "README.md"
 license = "Apache-2.0"
-license-file = "LICENSE"
 keywords = ["io", "event-loop", "mio", "networking", "reactor"]
 categories = ["network-programming", "asynchronous", "concurrency"]
 include = [
