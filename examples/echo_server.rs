@@ -1,4 +1,8 @@
+#[cfg(not(target_os = "linux"))]
+use mill_io::handler::SafeEvent;
 use mill_io::{error::Result, EventHandler, EventLoop, ObjectPool, PooledObject};
+#[cfg(target_os = "linux")]
+use mio::event::Event;
 use mio::{
     net::{TcpListener, TcpStream},
     Interest, Token,
@@ -88,8 +92,12 @@ impl EchoServerHandler {
 }
 
 impl EventHandler for EchoServerHandler {
-    fn handle_event(&self, event: &mio::event::Event) {
-        if event.token() == LISTENER {
+    fn handle_event(
+        &self,
+        #[cfg(target_os = "linux")] event: &Event,
+        #[cfg(not(target_os = "linux"))] event: &SafeEvent,
+    ) {
+        if event.token() == LISTENER && event.is_readable() {
             if let Err(e) = self.handle_listener_event(self.connections.clone(), &self.buffer_pool)
             {
                 eprintln!("error accepting connection: {}", e);
@@ -109,7 +117,11 @@ pub struct ClientHandler {
 }
 
 impl EventHandler for ClientHandler {
-    fn handle_event(&self, event: &mio::event::Event) {
+    fn handle_event(
+        &self,
+        #[cfg(target_os = "linux")] event: &Event,
+        #[cfg(not(target_os = "linux"))] event: &SafeEvent,
+    ) {
         let mut connections = self.connections.lock().unwrap();
         if let Some(stream) = connections.get_mut(&self.token) {
             if event.is_readable() {

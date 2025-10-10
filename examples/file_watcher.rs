@@ -1,5 +1,11 @@
-use mill_io::{EventHandler, EventLoop, error::Result};
-use mio::{Interest, Token};
+#[cfg(not(target_os = "linux"))]
+use mill_io::handler::SafeEvent;
+use mill_io::{error::Result, EventHandler, EventLoop};
+use mio::Token;
+
+#[cfg(target_os = "linux")]
+use mio::{event::Event, Interest};
+
 use std::{
     collections::HashMap,
     env,
@@ -114,39 +120,44 @@ impl FileWatcher {
 pub struct FileEventHandler {
     token: Token,
     path: PathBuf,
+    #[cfg(target_os = "linux")]
     watches: Arc<Mutex<HashMap<Token, PathBuf>>>,
     #[cfg(target_os = "linux")]
     inotify: Arc<Mutex<inotify::Inotify>>,
 }
 
 impl EventHandler for FileEventHandler {
-    fn handle_event(&self, event: &mio::event::Event) {
+    #[cfg(target_os = "linux")]
+    fn handle_event(&self, event: &Event) {
         if event.token() != self.token {
             return;
         }
 
         if event.is_readable() {
-            #[cfg(target_os = "linux")]
-            {
-                let mut inotify = self.inotify.lock().unwrap();
-                let mut buffer = [0; 4096];
+            let mut inotify = self.inotify.lock().unwrap();
+            let mut buffer = [0; 4096];
 
-                match inotify.read_events(&mut buffer) {
-                    Ok(events) => {
-                        for event in events {
-                            self.process_file_event(event);
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("Error reading inotify events: {}", e);
+            match inotify.read_events(&mut buffer) {
+                Ok(events) => {
+                    for event in events {
+                        self.process_file_event(event);
                     }
                 }
+                Err(e) => {
+                    eprintln!("Error reading inotify events: {}", e);
+                }
             }
+        }
+    }
 
-            #[cfg(not(target_os = "linux"))]
-            {
-                println!("File event detected for path: {:?}", self.path);
-            }
+    #[cfg(not(target_os = "linux"))]
+    fn handle_event(&self, event: &SafeEvent) {
+        if event.token() != self.token {
+            return;
+        }
+
+        if event.is_readable() {
+            println!("File event detected for path: {:?}", self.path);
         }
     }
 }
@@ -177,6 +188,7 @@ impl FileEventHandler {
         self.handle_file_event(file_event);
     }
 
+    #[cfg(target_os = "linux")]
     fn handle_file_event(&self, event: FileEvent) {
         match event {
             FileEvent::Created(path) => {
@@ -203,7 +215,10 @@ fn main() -> Result<()> {
 
     for path in &paths_to_watch {
         if !path.exists() {
-            eprintln!("Error: Path {:?} does not exist", path.canonicalize().unwrap());
+            eprintln!(
+                "Error: Path {:?} does not exist",
+                path.canonicalize().unwrap()
+            );
             return Ok(());
         }
     }
@@ -215,7 +230,11 @@ fn main() -> Result<()> {
 
     for path in &paths_to_watch {
         match watcher.watch_path(path) {
-            Ok(()) => println!("[INFO] Wathcing path={:#?}", path.canonicalize().expect("[ERROR] Could not get the path canonicalized")),
+            Ok(()) => println!(
+                "[INFO] Wathcing path={:#?}",
+                path.canonicalize()
+                    .expect("[ERROR] Could not get the path canonicalized")
+            ),
             Err(e) => {
                 eprintln!("[ERROR] Failed to watch {:?}: {}", path, e);
                 #[cfg(not(target_os = "linux"))]

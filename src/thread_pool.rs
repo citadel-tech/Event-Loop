@@ -70,6 +70,7 @@ impl Drop for ThreadPool {
 }
 
 struct Worker {
+    #[cfg(target_os = "linux")]
     id: usize,
     thread: Option<JoinHandle<()>>,
 }
@@ -79,27 +80,29 @@ impl Worker {
         let thread = Some(
             Builder::new()
                 .name(format!("thread-pool-worker-{id}"))
-                .spawn(move || {
-                    loop {
-                        let task = {
-                            let receiver = reciever.lock().unwrap();
-                            if let Ok(message) = receiver.recv() {
-                                match message {
-                                    WorkerMessage::Task(task) => task,
-                                    WorkerMessage::Terminate => break,
-                                }
-                            } else {
-                                break;
+                .spawn(move || loop {
+                    let task = {
+                        let receiver = reciever.lock().unwrap();
+                        if let Ok(message) = receiver.recv() {
+                            match message {
+                                WorkerMessage::Task(task) => task,
+                                WorkerMessage::Terminate => break,
                             }
-                        };
+                        } else {
+                            break;
+                        }
+                    };
 
-                        task();
-                    }
+                    task();
                 })
                 .expect(&format!("Couldn't create the worker thread id={id}")),
         );
 
-        Self { id, thread }
+        Self {
+            #[cfg(target_os = "linux")]
+            id,
+            thread,
+        }
     }
 
     pub fn take_thread(&mut self) -> Option<JoinHandle<()>> {
