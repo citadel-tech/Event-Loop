@@ -1,3 +1,5 @@
+#[cfg(not(target_os = "linux"))]
+use crate::handler::SafeEvent;
 use crate::{error::Result, poll::PollHandle, thread_pool::ThreadPool};
 use mio::{event::Event, Events};
 use std::{
@@ -58,7 +60,7 @@ impl Reactor {
         Ok(())
     }
 
-    pub fn get_shutdown_handle(&self) -> ShutdownHandle {
+    pub fn get_shutdown_handle(&'_ self) -> ShutdownHandle<'_> {
         ShutdownHandle {
             running: &self.running,
             poll_handle: &self.poll_handle,
@@ -67,19 +69,23 @@ impl Reactor {
 
     pub fn dispatch_event(&self, event: Event) -> Result<()> {
         let token = event.token();
+        let is_readable = event.is_readable();
+        let is_writable = event.is_writable();
+
+        #[cfg(not(target_os = "linux"))]
+        let safe_event = SafeEvent::from(&event);
 
         let registry = self.poll_handle.get_registery();
 
         self.pool.exec(move || {
             let entry = registry.get(&token);
-
             if let Some(entry) = entry {
                 let interest = entry.1.interest;
                 let handler = entry.1.handler.as_ref();
-                if (interest.is_readable() && event.is_readable())
-                    || (interest.is_writable() && event.is_writable())
+                if (interest.is_readable() && is_readable)
+                    || (interest.is_writable() && is_writable)
                 {
-                    handler.handle_event(&event);
+                    handler.handle_event(&safe_event);
                 }
             }
         })
@@ -117,7 +123,11 @@ mod tests {
     }
 
     impl EventHandler for TestHandler {
-        fn handle_event(&self, _event: &Event) {
+        fn handle_event(
+            &self,
+            #[cfg(target_os = "linux")] _event: &Event,
+            #[cfg(not(target_os = "linux"))] _event: &SafeEvent,
+        ) {
             let mut count = self.counter.lock().unwrap();
             *count += 1;
             self.condition.notify_one();

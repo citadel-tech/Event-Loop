@@ -1,4 +1,8 @@
+#[cfg(not(target_os = "linux"))]
+use mill_io::handler::SafeEvent;
 use mill_io::{error::Result, EventHandler, EventLoop, ObjectPool, PooledObject};
+#[cfg(target_os = "linux")]
+use mio::event::Event;
 use mio::{
     net::{TcpListener, TcpStream},
     Interest, Token,
@@ -173,7 +177,11 @@ impl HttpServer {
 }
 
 impl EventHandler for HttpServer {
-    fn handle_event(&self, event: &mio::event::Event) {
+    fn handle_event(
+        &self,
+        #[cfg(target_os = "linux")] event: &Event,
+        #[cfg(not(target_os = "linux"))] event: &SafeEvent,
+    ) {
         if event.token() == LISTENER_TOKEN && event.is_readable() {
             if let Err(e) = self.accept_connections() {
                 eprintln!("Error accepting connections: {}", e);
@@ -238,7 +246,11 @@ impl HttpClient {
 }
 
 impl EventHandler for HttpClient {
-    fn handle_event(&self, event: &mio::event::Event) {
+    fn handle_event(
+        &self,
+        #[cfg(target_os = "linux")] event: &Event,
+        #[cfg(not(target_os = "linux"))] event: &SafeEvent,
+    ) {
         if !event.is_readable() {
             return;
         }

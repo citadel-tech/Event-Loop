@@ -1,4 +1,8 @@
+#[cfg(not(target_os = "linux"))]
+use mill_io::handler::SafeEvent;
 use mill_io::{error::Result, EventHandler, EventLoop, ObjectPool, PooledObject};
+#[cfg(target_os = "linux")]
+use mio::event::Event;
 use mio::{net::TcpListener, Interest, Token};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -116,7 +120,11 @@ impl RpcServer {
 }
 
 impl EventHandler for RpcServer {
-    fn handle_event(&self, event: &mio::event::Event) {
+    fn handle_event(
+        &self,
+        #[cfg(target_os = "linux")] event: &Event,
+        #[cfg(not(target_os = "linux"))] event: &SafeEvent,
+    ) {
         if event.token() == LISTENER_TOKEN && event.is_readable() {
             if let Err(e) = self.accept_connections() {
                 eprintln!("[ERROR] Couldn't accept connections: {}", e);
@@ -214,7 +222,11 @@ impl RpcClient {
 }
 
 impl EventHandler for RpcClient {
-    fn handle_event(&self, event: &mio::event::Event) {
+    fn handle_event(
+        &self,
+        #[cfg(target_os = "linux")] event: &Event,
+        #[cfg(not(target_os = "linux"))] event: &SafeEvent,
+    ) {
         println!("[INFO] handling event for client: {:?}", self.token);
         if !event.is_readable() {
             return;

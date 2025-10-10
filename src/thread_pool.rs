@@ -71,6 +71,7 @@ impl Drop for ThreadPool {
 }
 
 struct Worker {
+    #[cfg(target_os = "linux")]
     id: usize,
     thread: Option<JoinHandle<()>>,
 }
@@ -98,7 +99,11 @@ impl Worker {
                 .expect(&format!("Couldn't create the worker thread id={id}")),
         );
 
-        Self { id, thread }
+        Self {
+            #[cfg(target_os = "linux")]
+            id,
+            thread,
+        }
     }
 
     pub fn take_thread(&mut self) -> Option<JoinHandle<()>> {
