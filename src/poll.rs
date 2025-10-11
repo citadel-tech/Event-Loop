@@ -66,11 +66,7 @@ impl PollHandle {
         Ok(())
     }
 
-    pub fn poll<'a>(
-        &self,
-        events: &'a mut Events,
-        timeout: Option<std::time::Duration>,
-    ) -> Result<usize> {
+    pub fn poll(&self, events: &mut Events, timeout: Option<std::time::Duration>) -> Result<usize> {
         let mut poller = self
             .poller
             .write()
