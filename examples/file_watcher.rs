@@ -93,7 +93,6 @@ impl FileWatcher {
                 FileEventHandler {
                     token,
                     path: path.clone(),
-                    watches: self.watches.clone(),
                     inotify: self.inotify.clone(),
                 },
             )?;
