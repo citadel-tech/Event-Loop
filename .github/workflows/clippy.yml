@@ -13,12 +13,17 @@ jobs:
   clippy:
     runs-on: ubuntu-latest
     
+    strategy:
+      matrix:
+        rust: [stable, nightly]
+    
     steps:
     - uses: actions/checkout@v4
     
-    - name: Install Rust stable
-      uses: dtolnay/rust-toolchain@stable
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@master
       with:
+        toolchain: ${{ matrix.rust }}
         components: clippy
     
     - name: Cache cargo dependencies
@@ -30,15 +35,22 @@ jobs:
           ~/.cargo/registry/cache/
           ~/.cargo/git/db/
           target/
-        key: clippy-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+        key: clippy-${{ runner.os }}-${{ matrix.rust }}-${{ hashFiles('**/Cargo.lock') }}
         restore-keys: |
-          clippy-${{ runner.os }}-
+          clippy-${{ runner.os }}-${{ matrix.rust }}-
     
-    - name: Run clippy
-      run: cargo clippy --all-targets --all-features -- -D warnings
-    
-    - name: Run clippy (no default features)
-      run: cargo clippy --all-targets --no-default-features -- -D warnings
+    - name: Run clippy (all targets)
+      run: |
+        if [ "${{ matrix.rust }}" = "nightly" ]; then
+          cargo clippy --all-targets --features unstable -- -D warnings
+        else
+          cargo clippy --all-targets --no-default-features -- -D warnings
+        fi
     
     - name: Run clippy (tests)
-      run: cargo clippy --tests --all-features -- -D warnings
+      run: |
+        if [ "${{ matrix.rust }}" = "nightly" ]; then
+          cargo clippy --tests --features unstable -- -D warnings
+        else
+          cargo clippy --tests --no-default-features -- -D warnings
+        fi
