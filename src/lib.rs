@@ -137,8 +137,8 @@ use crate::{
 /// This brings into scope:
 /// - [`EventHandler`] - Trait for implementing event handling logic
 /// - [`ObjectPool`] and [`PooledObject`] - Object pooling utilities
-/// - [`Reactor`] - Core reactor implementation (advanced usage)
-/// - [`ThreadPool`] - Thread pool implementation (advanced usage)
+/// - [`reactor::Reactor`] - Core reactor implementation (advanced usage)
+/// - [`thread_pool::ThreadPool`] - Thread pool implementation (advanced usage)
 pub mod prelude {
     pub use crate::handler::EventHandler;
     pub use crate::object_pool::{ObjectPool, PooledObject};
@@ -156,7 +156,7 @@ pub mod prelude {
 /// The event loop uses a reactor pattern internally, where I/O events are detected
 /// by the polling mechanism and dispatched to registered handlers via a thread pool.
 ///
-/// # Examples
+/// ## Example
 ///
 /// Basic usage with default configuration:
 ///
@@ -222,19 +222,19 @@ impl Default for EventLoop {
 impl EventLoop {
     /// Creates a new `EventLoop` with custom configuration.
     ///
-    /// # Arguments
+    /// ## Arguments
     /// * `workers` - Number of worker threads in the thread pool (recommended: num_cpus)
     /// * `events_capacity` - Maximum number of events to poll per iteration (typical: 512-4096)
     /// * `poll_timeout_ms` - Poll timeout in milliseconds (balance between latency and CPU usage)
     ///
-    /// # Errors
+    /// ## Errors
     ///
     /// Returns an error if:
     /// - The reactor cannot be initialized
     /// - The thread pool cannot be created
     /// - The polling mechanism fails to initialize
     ///
-    /// # Examples
+    /// ## Example
     ///
     /// ```rust,no_run
     /// use mill_io::EventLoop;
@@ -257,20 +257,20 @@ impl EventLoop {
     /// When events occur on the source, the provided handler will be invoked on a worker thread.
     ///
     ///
-    /// # Arguments
+    /// ## Arguments
     /// * `source` - The I/O source to register (e.g., [`mio::net::TcpListener`])
     /// * `token` - Unique token for identifying events from this source
     /// * `interests` - I/O events to listen for ([`mio::Interest::READABLE`], [`mio::Interest::WRITABLE`])
     /// * `handler` - Event handler that will process events from this source
     ///
-    /// # Errors
+    /// ## Errors
     ///
     /// Returns an error if:
     /// - The token is already in use
     /// - The source cannot be registered with the underlying poll mechanism
     /// - The handler registry is full
     ///
-    /// # Examples
+    /// ## Example
     ///
     /// ```rust,no_run
     /// use mill_io::{EventLoop, EventHandler};
@@ -283,18 +283,19 @@ impl EventLoop {
     ///         // Handle new connections
     ///     }
     /// }
+    /// fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ///     let event_loop = EventLoop::default();
+    ///     let addr: SocketAddr = "0.0.0.0:8080".parse()?;
+    ///     let mut listener = TcpListener::bind(addr)?;
     ///
-    /// let event_loop = EventLoop::default();
-    /// let addr: SocketAddr = "0.0.0.0:8080".parse()?;
-    /// let mut listener = TcpListener::bind(addr)?;
-    ///
-    /// event_loop.register(
-    ///     &mut listener,
-    ///     Token(0),
-    ///     Interest::READABLE,
-    ///     ConnectionHandler
-    /// )?;
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    ///     event_loop.register(
+    ///         &mut listener,
+    ///         Token(0),
+    ///         Interest::READABLE,
+    ///         ConnectionHandler
+    ///     )?;
+    ///    Ok(())
+    /// }
     /// ```
     pub fn register<H, S>(
         &self,
@@ -317,18 +318,18 @@ impl EventLoop {
     /// Removes the source from the polling mechanism and clears its associated handler.
     /// After deregistration, no more events will be delivered for this source.
     ///
-    /// # Arguments
+    /// ## #Arguments
     /// * `source` - The I/O source to deregister
     /// * `token` - Token associated with the source during registration
     ///
-    /// # Errors
+    /// ## Error
     ///
     /// Returns an error if:
     /// - The source is not currently registered
     /// - The deregistration fails at the OS level
     /// - The token is invalid
     ///
-    /// # Examples
+    /// ## Example
     ///
     /// ```rust,no_run
     /// use mill_io::{EventLoop, EventHandler};
@@ -339,18 +340,20 @@ impl EventLoop {
     /// impl EventHandler for Handler {
     ///     fn handle_event(&self, _: &mio::event::Event) {}
     /// }
+    /// fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ///     
+    ///     let event_loop = EventLoop::default();
+    ///     let addr: SocketAddr = "127.0.0.1:0".parse()?;
+    ///     let mut listener = TcpListener::bind(addr)?;
+    ///     let token = Token(0);
     ///
-    /// let event_loop = EventLoop::default();
-    /// let addr: SocketAddr = "127.0.0.1:0".parse()?;
-    /// let mut listener = TcpListener::bind(addr)?;
-    /// let token = Token(0);
+    ///     // Register
+    ///     event_loop.register(&mut listener, token, Interest::READABLE, Handler)?;
     ///
-    /// // Register
-    /// event_loop.register(&mut listener, token, Interest::READABLE, Handler)?;
-    ///
-    /// // Later, deregister
-    /// event_loop.deregister(&mut listener, token)?;
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    ///     // Later, deregister
+    ///     event_loop.deregister(&mut listener, token)?;
+    ///     Ok(())
+    /// }
     /// ```
     pub fn deregister<S>(&self, source: &mut S, token: Token) -> Result<()>
     where
@@ -369,13 +372,22 @@ impl EventLoop {
     /// The method blocks the calling thread and will only return when the event loop
     /// is stopped or encounters a fatal error.
     ///
-    /// # Errors
+    /// ## Errors
     ///
     /// Returns an error if:
     /// - The polling mechanism fails
     /// - The thread pool encounters a fatal error
     /// - System resources are exhausted
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    ///
+    /// ## Example
+    ///
+    /// ```rust,no_run
+    /// use mill_io::EventLoop;
+    ///
+    /// let event_loop = EventLoop::default();
+    /// // Register some handlers first...
+    /// event_loop.run()
+    /// # ; Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn run(&self) -> Result<()> {
         self.reactor.run()
@@ -395,7 +407,7 @@ impl EventLoop {
     /// This method is thread-safe and can be called from any thread, making it suitable
     /// for use in signal handlers or from other threads.
     ///
-    /// # Examples
+    /// ## Example
     ///
     /// ```rust,no_run
     /// use mill_io::EventLoop;
