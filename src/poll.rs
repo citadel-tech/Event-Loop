@@ -127,7 +127,7 @@ mod tests {
 
     #[test]
     fn test_poll() {
-        let mut poller = PollHandle::new().unwrap();
+        let poller = PollHandle::new().unwrap();
         let mut events = Events::with_capacity(1024);
         poller
             .poll(&mut events, Some(Duration::from_secs(1)))

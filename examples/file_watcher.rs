@@ -87,7 +87,6 @@ impl FileWatcher {
                 FileEventHandler {
                     token,
                     path: path.clone(),
-                    watches: self.watches.clone(),
                     inotify: self.inotify.clone(),
                 },
             )?;
@@ -114,7 +113,6 @@ impl FileWatcher {
 pub struct FileEventHandler {
     token: Token,
     path: PathBuf,
-    watches: Arc<Mutex<HashMap<Token, PathBuf>>>,
     #[cfg(target_os = "linux")]
     inotify: Arc<Mutex<inotify::Inotify>>,
 }
