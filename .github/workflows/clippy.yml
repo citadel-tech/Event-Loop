@@ -1,16 +1,44 @@
-on: 
+name: Lint with Clippy
+
+on:
   push:
-    branches: [ "master" ]
+    branches: [ "main" ]
   pull_request:
-    branches: [ "master" ]
-name: Clippy check
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
-  clippy_check:
+  clippy:
     runs-on: ubuntu-latest
+    
     steps:
-      - uses: actions/checkout@v1
-      - run: rustup component add clippy
-      - uses: actions-rs/clippy-check@v1
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          args: --all-features
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust stable
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: clippy
+    
+    - name: Cache cargo dependencies
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          target/
+        key: clippy-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          clippy-${{ runner.os }}-
+    
+    - name: Run clippy
+      run: cargo clippy --all-targets --all-features -- -D warnings
+    
+    - name: Run clippy (no default features)
+      run: cargo clippy --all-targets --no-default-features -- -D warnings
+    
+    - name: Run clippy (tests)
+      run: cargo clippy --tests --all-features -- -D warnings
