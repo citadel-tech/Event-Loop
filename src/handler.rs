@@ -1,5 +1,7 @@
-use mio::{event::Event, Interest, Token};
+use mio::{event::Event, Interest};
 
+#[cfg(not(target_os = "linux"))]
+use mio::Token;
 pub trait EventHandler {
     #[cfg(not(target_os = "linux"))]
     fn handle_event(&self, event: &SafeEvent);
@@ -14,6 +16,8 @@ pub struct SafeEvent {
     is_readable: bool,
     is_writable: bool,
 }
+
+#[cfg(not(target_os = "linux"))]
 impl SafeEvent {
     pub fn token(&self) -> Token {
         self.token
@@ -28,6 +32,7 @@ impl SafeEvent {
     }
 }
 
+#[cfg(not(target_os = "linux"))]
 impl From<&Event> for SafeEvent {
     fn from(value: &Event) -> Self {
         Self {

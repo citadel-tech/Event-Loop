@@ -60,7 +60,7 @@ impl Reactor {
         Ok(())
     }
 
-    pub fn get_shutdown_handle(&'_ self) -> ShutdownHandle<'_> {
+    pub fn get_shutdown_handle(&self) -> ShutdownHandle<'_> {
         ShutdownHandle {
             running: &self.running,
             poll_handle: &self.poll_handle,
@@ -85,6 +85,9 @@ impl Reactor {
                 if (interest.is_readable() && is_readable)
                     || (interest.is_writable() && is_writable)
                 {
+                    #[cfg(target_os = "linux")]
+                    handler.handle_event(&event);
+                    #[cfg(not(target_os = "linux"))]
                     handler.handle_event(&safe_event);
                 }
             }
