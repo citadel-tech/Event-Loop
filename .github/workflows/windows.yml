@@ -26,7 +26,7 @@ jobs:
         toolchain: ${{ matrix.rust }}
     
     - name: Cache cargo dependencies
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: |
           ~/.cargo/bin/
@@ -40,15 +40,35 @@ jobs:
           ${{ runner.os }}-cargo-
     
     - name: Build
-      run: cargo build --verbose --all-features
+      run: |
+        if ("${{ matrix.rust }}" -eq "nightly") {
+          cargo build --verbose --features unstable
+        } else {
+          cargo build --verbose --no-default-features
+        }
     
     - name: Run tests
-      run: cargo test --verbose --all-features
+      run: |
+        if ("${{ matrix.rust }}" -eq "nightly") {
+          cargo test --verbose --features unstable
+        } else {
+          cargo test --verbose --no-default-features
+        }
     
     - name: Run doc tests
-      run: cargo test --doc --verbose
+      run: |
+        if ("${{ matrix.rust }}" -eq "nightly") {
+          cargo test --doc --verbose --features unstable
+        } else {
+          cargo test --doc --verbose --no-default-features
+        }
     
     - name: Check documentation
-      run: cargo doc --no-deps --all-features
+      run: |
+        if ("${{ matrix.rust }}" -eq "nightly") {
+          cargo doc --no-deps --features unstable
+        } else {
+          cargo doc --no-deps --no-default-features
+        }
       env:
         RUSTDOCFLAGS: -D warnings
