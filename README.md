@@ -41,7 +41,7 @@ use mio::{net::TcpListener, Interest, Token};
 struct EchoHandler;
 
 impl EventHandler for EchoHandler {
-    fn handle_event(&self, event: &mio::event::Event) {
+    fn handle_event(&self, event: &UnifiedEvent) {
         // Handle incoming connections
     }
 }

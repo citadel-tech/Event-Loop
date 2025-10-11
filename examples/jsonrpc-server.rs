@@ -1,25 +1,26 @@
-#[cfg(not(target_os = "linux"))]
-use mill_io::handler::SafeEvent;
-use mill_io::{error::Result, EventHandler, EventLoop, ObjectPool, PooledObject};
-#[cfg(target_os = "linux")]
-use mio::event::Event;
+use mill_io::{error::Result, EventHandler, EventLoop, ObjectPool, PooledObject, UnifiedEvent};
 use mio::{net::TcpListener, Interest, Token};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     io::{Read, Write},
     net::SocketAddr,
-    sync::{Arc, LazyLock, Mutex, RwLock},
+    sync::{Arc, Mutex, OnceLock, RwLock},
     time::SystemTime,
 };
 
 use lockfree::map::Map;
 
-static EVENT_LOOP: LazyLock<EventLoop> = LazyLock::new(|| EventLoop::default());
+static EVENT_LOOP: OnceLock<EventLoop> = OnceLock::new();
+fn event_loop() -> &'static EventLoop {
+    EVENT_LOOP.get_or_init(EventLoop::default)
+}
 
 const LISTENER_TOKEN: Token = Token(1);
-static NEXT_TOKEN: LazyLock<RwLock<TokenGenerator>> =
-    LazyLock::new(|| RwLock::new(TokenGenerator::new()));
+static NEXT_TOKEN: OnceLock<RwLock<TokenGenerator>> = OnceLock::new();
+fn next_token_lock() -> &'static RwLock<TokenGenerator> {
+    NEXT_TOKEN.get_or_init(|| RwLock::new(TokenGenerator::new()))
+}
 
 struct TokenGenerator {
     next: usize,
@@ -85,10 +86,10 @@ impl RpcServer {
                 Ok((mut stream, addr)) => {
                     println!("[INFO] New RPC connection from: {}", addr);
 
-                    let token = NEXT_TOKEN.write()?.next();
+                    let token = next_token_lock().write()?.next();
 
                     let before = SystemTime::now();
-                    EVENT_LOOP.register(
+                    event_loop().register(
                         &mut stream,
                         token,
                         Interest::READABLE,
@@ -120,11 +121,7 @@ impl RpcServer {
 }
 
 impl EventHandler for RpcServer {
-    fn handle_event(
-        &self,
-        #[cfg(target_os = "linux")] event: &Event,
-        #[cfg(not(target_os = "linux"))] event: &SafeEvent,
-    ) {
+    fn handle_event(&self, event: &UnifiedEvent) {
         if event.token() == LISTENER_TOKEN && event.is_readable() {
             if let Err(e) = self.accept_connections() {
                 eprintln!("[ERROR] Couldn't accept connections: {}", e);
@@ -210,7 +207,7 @@ impl RpcClient {
         println!("[INFO] RPC client disconnected: {:?}", self.token);
         if let Ok(mut connections) = self.connections.lock() {
             if let Some(mut stream) = connections.remove(&self.token) {
-                if let Err(e) = EVENT_LOOP.deregister(&mut stream, self.token) {
+                if let Err(e) = event_loop().deregister(&mut stream, self.token) {
                     eprintln!(
                         "[ERROR] Failed to deregister client {:?}: {}",
                         self.token, e
@@ -222,11 +219,7 @@ impl RpcClient {
 }
 
 impl EventHandler for RpcClient {
-    fn handle_event(
-        &self,
-        #[cfg(target_os = "linux")] event: &Event,
-        #[cfg(not(target_os = "linux"))] event: &SafeEvent,
-    ) {
+    fn handle_event(&self, event: &UnifiedEvent) {
         println!("[INFO] handling event for client: {:?}", self.token);
         if !event.is_readable() {
             return;
@@ -298,7 +291,7 @@ fn main() -> Result<()> {
 
     let server = RpcServer::new(Arc::clone(&listener))?;
 
-    EVENT_LOOP.register::<RpcServer, TcpListener>(
+    event_loop().register::<RpcServer, TcpListener>(
         &mut listener.lock().unwrap(),
         LISTENER_TOKEN,
         Interest::READABLE,
@@ -306,7 +299,7 @@ fn main() -> Result<()> {
     )?;
 
     println!("[INFO] Server listening on {}", addr);
-    EVENT_LOOP.run()?;
+    event_loop().run()?;
 
     Ok(())
 }

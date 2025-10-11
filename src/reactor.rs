@@ -1,6 +1,4 @@
-#[cfg(not(target_os = "linux"))]
-use crate::handler::SafeEvent;
-use crate::{error::Result, poll::PollHandle, thread_pool::ThreadPool};
+use crate::{error::Result, poll::PollHandle, thread_pool::ThreadPool, UnifiedEvent};
 use mio::{event::Event, Events};
 use std::{
     sync::{
@@ -72,8 +70,7 @@ impl Reactor {
         let is_readable = event.is_readable();
         let is_writable = event.is_writable();
 
-        #[cfg(not(target_os = "linux"))]
-        let safe_event = SafeEvent::from(&event);
+        let unified_event = UnifiedEvent::from(&event);
 
         let registry = self.poll_handle.get_registery();
 
@@ -85,10 +82,7 @@ impl Reactor {
                 if (interest.is_readable() && is_readable)
                     || (interest.is_writable() && is_writable)
                 {
-                    #[cfg(target_os = "linux")]
-                    handler.handle_event(&event);
-                    #[cfg(not(target_os = "linux"))]
-                    handler.handle_event(&safe_event);
+                    handler.handle_event(&unified_event);
                 }
             }
         })
@@ -126,11 +120,7 @@ mod tests {
     }
 
     impl EventHandler for TestHandler {
-        fn handle_event(
-            &self,
-            #[cfg(target_os = "linux")] _event: &Event,
-            #[cfg(not(target_os = "linux"))] _event: &SafeEvent,
-        ) {
+        fn handle_event(&self, _event: &UnifiedEvent) {
             let mut count = self.counter.lock().unwrap();
             *count += 1;
             self.condition.notify_one();
@@ -186,10 +176,10 @@ mod tests {
                 let mut events = reactor_clone.events.write().unwrap();
                 reactor_clone
                     .poll_handle
-                    .poll(&mut *events, Some(Duration::from_millis(100)))
+                    .poll(&mut events, Some(Duration::from_millis(100)))
             };
 
-            if let Ok(_) = events_result {
+            if events_result.is_ok() {
                 let events = reactor_clone.events.read().unwrap();
                 for event in events.iter() {
                     let _ = reactor_clone.dispatch_event(event.clone());
@@ -247,10 +237,10 @@ mod tests {
                 let mut events = reactor_clone.events.write().unwrap();
                 reactor_clone
                     .poll_handle
-                    .poll(&mut *events, Some(Duration::from_millis(100)))
+                    .poll(&mut events, Some(Duration::from_millis(100)))
             };
 
-            if let Ok(_) = events_result {
+            if events_result.is_ok() {
                 let events = reactor_clone.events.read().unwrap();
                 for event in events.iter() {
                     let _ = reactor_clone.dispatch_event(event.clone());

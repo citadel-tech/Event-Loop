@@ -85,12 +85,8 @@ impl PollHandle {
 }
 #[cfg(test)]
 mod tests {
-    #[cfg(not(target_os = "linux"))]
-    use crate::handler::SafeEvent;
-
     use super::*;
-    #[cfg(target_os = "linux")]
-    use mio::event::Event;
+    use crate::UnifiedEvent;
     use mio::event::Source;
     use mio::Events;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -152,11 +148,7 @@ mod tests {
         }
 
         impl EventHandler for TestHandler {
-            fn handle_event(
-                &self,
-                #[cfg(target_os = "linux")] _event: &Event,
-                #[cfg(not(target_os = "linux"))] _event: &SafeEvent,
-            ) {
+            fn handle_event(&self, _event: &UnifiedEvent) {
                 self.called.store(true, Ordering::SeqCst);
             }
         }
@@ -173,7 +165,7 @@ mod tests {
         );
 
         assert!(
-            poller.registery.iter().find(|t| t.0 == token).is_some(),
+            poller.registery.iter().any(|t| t.0 == token),
             "Token not found in registry"
         );
 
@@ -183,7 +175,7 @@ mod tests {
         );
 
         assert!(
-            poller.registery.iter().find(|t| t.0 == token).is_none(),
+            !poller.registery.iter().any(|t| t.0 == token),
             "Token should have been removed from registry"
         );
     }
@@ -196,12 +188,7 @@ mod tests {
 
         struct NoopHandler;
         impl EventHandler for NoopHandler {
-            fn handle_event(
-                &self,
-                #[cfg(target_os = "linux")] _event: &Event,
-                #[cfg(not(target_os = "linux"))] _event: &SafeEvent,
-            ) {
-            }
+            fn handle_event(&self, _event: &UnifiedEvent) {}
         }
 
         assert!(
@@ -219,11 +206,11 @@ mod tests {
 
         assert_eq!(poller.registery.iter().count(), 2);
         assert!(
-            poller.registery.iter().find(|t| t.0 == Token(1)).is_some(),
+            poller.registery.iter().any(|t| t.0 == Token(1)),
             "Failed to find src1"
         );
         assert!(
-            poller.registery.iter().find(|t| t.0 == Token(2)).is_some(),
+            poller.registery.iter().any(|t| t.0 == Token(2)),
             "Failed to find src2"
         );
     }

@@ -1,8 +1,4 @@
-#[cfg(not(target_os = "linux"))]
-use mill_io::handler::SafeEvent;
-use mill_io::{error::Result, EventHandler, EventLoop, ObjectPool, PooledObject};
-#[cfg(target_os = "linux")]
-use mio::event::Event;
+use mill_io::{error::Result, EventHandler, EventLoop, ObjectPool, PooledObject, UnifiedEvent};
 use mio::{
     net::{TcpListener, TcpStream},
     Interest, Token,
@@ -11,12 +7,17 @@ use std::{
     collections::HashMap,
     io::{Read, Write},
     net::SocketAddr,
-    sync::{Arc, LazyLock, Mutex, RwLock},
+    sync::{Arc, Mutex, OnceLock, RwLock},
 };
 
-static EVENT_LOOP: LazyLock<EventLoop> = LazyLock::new(|| EventLoop::default());
-static NEXT_TOKEN: LazyLock<RwLock<TokenGenerator>> =
-    LazyLock::new(|| RwLock::new(TokenGenerator::new()));
+static EVENT_LOOP: OnceLock<EventLoop> = OnceLock::new();
+fn event_loop() -> &'static EventLoop {
+    EVENT_LOOP.get_or_init(EventLoop::default)
+}
+static NEXT_TOKEN: OnceLock<RwLock<TokenGenerator>> = OnceLock::new();
+fn next_token_lock() -> &'static RwLock<TokenGenerator> {
+    NEXT_TOKEN.get_or_init(|| RwLock::new(TokenGenerator::new()))
+}
 
 const LISTENER_TOKEN: Token = Token(1);
 
@@ -154,9 +155,9 @@ impl HttpServer {
                 Ok((mut stream, addr)) => {
                     println!("New connection from: {}", addr);
 
-                    let token = NEXT_TOKEN.write()?.generate();
+                    let token = next_token_lock().write()?.generate();
 
-                    EVENT_LOOP.register(
+                    event_loop().register(
                         &mut stream,
                         token,
                         Interest::READABLE,
@@ -177,11 +178,7 @@ impl HttpServer {
 }
 
 impl EventHandler for HttpServer {
-    fn handle_event(
-        &self,
-        #[cfg(target_os = "linux")] event: &Event,
-        #[cfg(not(target_os = "linux"))] event: &SafeEvent,
-    ) {
+    fn handle_event(&self, event: &UnifiedEvent) {
         if event.token() == LISTENER_TOKEN && event.is_readable() {
             if let Err(e) = self.accept_connections() {
                 eprintln!("Error accepting connections: {}", e);
@@ -237,7 +234,7 @@ impl HttpClient {
         println!("Client disconnected: {:?}", self.token);
         if let Ok(mut connections) = self.connections.lock() {
             if let Some(mut stream) = connections.remove(&self.token) {
-                if let Err(e) = EVENT_LOOP.deregister(&mut stream, self.token) {
+                if let Err(e) = event_loop().deregister(&mut stream, self.token) {
                     eprintln!("Failed to deregister client {:?}: {}", self.token, e);
                 }
             }
@@ -246,11 +243,7 @@ impl HttpClient {
 }
 
 impl EventHandler for HttpClient {
-    fn handle_event(
-        &self,
-        #[cfg(target_os = "linux")] event: &Event,
-        #[cfg(not(target_os = "linux"))] event: &SafeEvent,
-    ) {
+    fn handle_event(&self, event: &UnifiedEvent) {
         if !event.is_readable() {
             return;
         }
@@ -310,7 +303,7 @@ fn main() -> Result<()> {
 
     let server = HttpServer::new(Arc::clone(&listener));
 
-    EVENT_LOOP.register::<HttpServer, TcpListener>(
+    event_loop().register::<HttpServer, TcpListener>(
         &mut listener.lock().unwrap(),
         LISTENER_TOKEN,
         Interest::READABLE,
@@ -318,7 +311,7 @@ fn main() -> Result<()> {
     )?;
 
     println!("Server listening on {addr}");
-    EVENT_LOOP.run()?;
+    event_loop().run()?;
 
     Ok(())
 }

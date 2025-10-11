@@ -1,4 +1,3 @@
-
 #[cfg(feature = "unstable-mpmc")]
 use std::sync::mpmc as channel;
 #[cfg(not(feature = "unstable-mpmc"))]

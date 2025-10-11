@@ -1,31 +1,23 @@
 //! # Mill-IO
-//!
 //! A lightweight, production-ready event loop library for Rust that provides efficient non-blocking I/O management
 //! without relying on heavyweight async runtimes like Tokio.
-//!
 //! Mill-IO is a modular, reactor-based event loop built on top of [`mio`], offering cross-platform polling,
 //! configurable thread pool integration, and object pooling for high-performance applications that need
 //! fine-grained control over their I/O operations.
-//!
 //! ## Core Philosophy
-//!
 //! Mill-IO was designed for applications that require:
 //! - **Predictable performance** with minimal runtime overhead
 //! - **Runtime-agnostic architecture** that doesn't force async/await patterns
 //! - **Direct control** over concurrency and resource management
 //! - **Minimal dependencies** for reduced attack surface and faster builds
-//!
 //! ## Features
-//!
 //! - **Runtime-agnostic**: No dependency on Tokio or other async runtimes
 //! - **Cross-platform**: Leverages mio's polling abstraction (epoll, kqueue, IOCP)
 //! - **Thread pool integration**: Configurable worker threads for handling I/O events
 //! - **Object pooling**: Reduces allocation overhead for frequent operations
 //! - **Clean API**: Simple registration and handler interface
 //! - **Thread-safe**: Lock-free operations in hot paths
-//!
 //! ## Architecture Overview
-//!
 //! ```text
 //! ┌─────────────┐    ┌──────────────┐    ┌─────────────┐
 //! │ EventLoop   │───▶│   Reactor    │───▶│ PollHandle  │
@@ -36,18 +28,17 @@
 //!                    │ ThreadPool   │───▶│   Workers   │
 //!                    └──────────────┘    └─────────────┘
 //! ```
-//!
 //! ## Quick Start
 //!
 //! ```rust,no_run
-//! use mill_io::{EventLoop, EventHandler};
+//! use mill_io::{EventLoop, EventHandler, UnifiedEvent};
 //! use mio::{net::TcpListener, Interest, Token};
 //! use std::net::SocketAddr;
 //!
 //! struct EchoHandler;
 //!
 //! impl EventHandler for EchoHandler {
-//!     fn handle_event(&self, event: &mio::event::Event) {
+//!     fn handle_event(&self, event: &UnifiedEvent) {
 //!         println!("Received event: {:?}", event);
 //!         // Handle incoming connections and data
 //!     }
@@ -78,13 +69,10 @@
 //! }
 //! ```
 //!
-//! ## Advanced Configuration
-//!
 //! ```rust,no_run
 //! use mill_io::EventLoop;
 //!
 //! fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     // Create event loop with custom configuration
 //!     let event_loop = EventLoop::new(
 //!         8,      // 8 worker threads
 //!         1024,   // Handle up to 1024 events per poll
@@ -94,13 +82,10 @@
 //! }
 //! ```
 //!
-//! ## Module Overview
-//!
 //! - [`EventLoop`]: Main entry point for registering I/O sources and running the event loop
 //! - [`EventHandler`]: Trait for implementing custom event handling logic
 //! - [`reactor`]: Core reactor implementation managing the event loop lifecycle
 //! - [`thread_pool`]: Configurable thread pool for distributing work
-//! - [`object_pool`]: Memory-efficient object pooling for buffers and resources
 //! - [`poll`]: Cross-platform polling abstraction and handler registry
 //! - [`error`]: Error types and result handling
 //!
@@ -111,12 +96,13 @@
 
 use mio::{Interest, Token};
 pub mod error;
+pub mod event;
 pub mod handler;
 pub mod object_pool;
 pub mod poll;
 pub mod reactor;
 pub mod thread_pool;
-
+pub use event::UnifiedEvent;
 pub use handler::EventHandler;
 pub use object_pool::{ObjectPool, PooledObject};
 
@@ -161,13 +147,13 @@ pub mod prelude {
 /// Basic usage with default configuration:
 ///
 /// ```rust,no_run
-/// use mill_io::{EventLoop, EventHandler};
+/// use mill_io::{EventLoop, EventHandler, UnifiedEvent};
 /// use mio::{net::TcpListener, Interest, Token};
 /// use std::net::SocketAddr;
 ///
 /// struct MyHandler;
 /// impl EventHandler for MyHandler {
-///     fn handle_event(&self, event: &mio::event::Event) {
+///     fn handle_event(&self, event: &UnifiedEvent) {
 ///         println!("Event received: {:?}", event);
 ///     }
 /// }
@@ -273,13 +259,13 @@ impl EventLoop {
     /// ## Example
     ///
     /// ```rust,no_run
-    /// use mill_io::{EventLoop, EventHandler};
+    /// use mill_io::{EventLoop, EventHandler,event::UnifiedEvent};
     /// use mio::{net::TcpListener, Interest, Token};
     /// use std::net::SocketAddr;
     ///
     /// struct ConnectionHandler;
     /// impl EventHandler for ConnectionHandler {
-    ///     fn handle_event(&self, event: &mio::event::Event) {
+    ///     fn handle_event(&self, event: &UnifiedEvent) {
     ///         // Handle new connections
     ///     }
     /// }
@@ -332,13 +318,13 @@ impl EventLoop {
     /// ## Example
     ///
     /// ```rust,no_run
-    /// use mill_io::{EventLoop, EventHandler};
+    /// use mill_io::{EventLoop, EventHandler,event::UnifiedEvent};
     /// use mio::{net::TcpListener, Interest, Token};
     /// use std::net::SocketAddr;
     ///
     /// struct Handler;
     /// impl EventHandler for Handler {
-    ///     fn handle_event(&self, _: &mio::event::Event) {}
+    ///     fn handle_event(&self, _: &UnifiedEvent) {}
     /// }
     /// fn main() -> Result<(), Box<dyn std::error::Error>> {
     ///     
