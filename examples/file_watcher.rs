@@ -119,7 +119,7 @@ impl FileWatcher {
 pub struct FileEventHandler {
     token: Token,
     path: PathBuf,
-    #[cfg(target_os = "linux")]
+    #[allow(dead_code)]
     watches: Arc<Mutex<HashMap<Token, PathBuf>>>,
     #[cfg(target_os = "linux")]
     inotify: Arc<Mutex<inotify::Inotify>>,
@@ -234,7 +234,7 @@ fn main() -> Result<()> {
     for path in &paths_to_watch {
         match watcher.watch_path(path) {
             Ok(()) => println!(
-                "[INFO] Wathcing path={:#?}",
+                "[INFO] Watching path={:#?}",
                 path.canonicalize()
                     .expect("[ERROR] Could not get the path canonicalized")
             ),

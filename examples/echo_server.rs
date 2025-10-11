@@ -97,7 +97,7 @@ impl EventHandler for EchoServerHandler {
         #[cfg(target_os = "linux")] event: &Event,
         #[cfg(not(target_os = "linux"))] event: &SafeEvent,
     ) {
-        if event.token() == LISTENER && event.is_readable() {
+        if event.token() == LISTENER {
             if let Err(e) = self.handle_listener_event(self.connections.clone(), &self.buffer_pool)
             {
                 eprintln!("error accepting connection: {}", e);
