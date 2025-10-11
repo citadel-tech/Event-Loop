@@ -66,11 +66,7 @@ impl PollHandle {
         Ok(())
     }
 
-    pub fn poll<'a>(
-        &self,
-        events: &'a mut Events,
-        timeout: Option<std::time::Duration>,
-    ) -> Result<usize> {
+    pub fn poll(&self, events: &mut Events, timeout: Option<std::time::Duration>) -> Result<usize> {
         let mut poller = self
             .poller
             .write()
@@ -89,7 +85,12 @@ impl PollHandle {
 }
 #[cfg(test)]
 mod tests {
+    #[cfg(not(target_os = "linux"))]
+    use crate::handler::SafeEvent;
+
     use super::*;
+    #[cfg(target_os = "linux")]
+    use mio::event::Event;
     use mio::event::Source;
     use mio::Events;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -151,7 +152,11 @@ mod tests {
         }
 
         impl EventHandler for TestHandler {
-            fn handle_event(&self, _event: &mio::event::Event) {
+            fn handle_event(
+                &self,
+                #[cfg(target_os = "linux")] _event: &Event,
+                #[cfg(not(target_os = "linux"))] _event: &SafeEvent,
+            ) {
                 self.called.store(true, Ordering::SeqCst);
             }
         }
@@ -191,7 +196,12 @@ mod tests {
 
         struct NoopHandler;
         impl EventHandler for NoopHandler {
-            fn handle_event(&self, _event: &mio::event::Event) {}
+            fn handle_event(
+                &self,
+                #[cfg(target_os = "linux")] _event: &Event,
+                #[cfg(not(target_os = "linux"))] _event: &SafeEvent,
+            ) {
+            }
         }
 
         assert!(

@@ -71,18 +71,19 @@ impl Drop for ThreadPool {
 }
 
 struct Worker {
+    #[allow(dead_code)]
     id: usize,
     thread: Option<JoinHandle<()>>,
 }
 
 impl Worker {
-    pub fn new(id: usize, reciever: Arc<Mutex<ChannelReceiver>>) -> Self {
+    pub fn new(id: usize, receiver: Arc<Mutex<ChannelReceiver>>) -> Self {
         let thread = Some(
             Builder::new()
                 .name(format!("thread-pool-worker-{id}"))
                 .spawn(move || loop {
                     let task = {
-                        let receiver = reciever.lock().unwrap();
+                        let receiver = receiver.lock().unwrap();
                         if let Ok(message) = receiver.recv() {
                             match message {
                                 WorkerMessage::Task(task) => task,
@@ -95,7 +96,7 @@ impl Worker {
 
                     task();
                 })
-                .expect(&format!("Couldn't create the worker thread id={id}")),
+                .expect("Couldn't create the worker thread id={id}"),
         );
 
         Self { id, thread }

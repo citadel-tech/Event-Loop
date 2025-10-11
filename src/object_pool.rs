@@ -61,13 +61,15 @@ pub struct PooledObject<T> {
     pool_sender: channel::Sender<T>,
 }
 
-impl<T> PooledObject<T> {
-    pub fn as_ref(&self) -> &T {
-        self.object.as_ref().expect("PooledObject is empty")
-    }
-
-    pub fn as_mut(&mut self) -> &mut T {
+impl<T> std::convert::AsMut<T> for PooledObject<T> {
+    fn as_mut(&mut self) -> &mut T {
         self.object.as_mut().expect("PooledObject is empty")
+    }
+}
+
+impl<T> std::convert::AsRef<T> for PooledObject<T> {
+    fn as_ref(&self) -> &T {
+        self.object.as_ref().expect("PooledObject is empty")
     }
 }
 
