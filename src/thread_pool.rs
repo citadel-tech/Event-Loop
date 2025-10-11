@@ -96,7 +96,7 @@ impl Worker {
 
                     task();
                 })
-                .expect(&format!("Couldn't create the worker thread id={id}")),
+                .expect("Couldn't create the worker thread id={id}"),
         );
 
         Self { id, thread }
