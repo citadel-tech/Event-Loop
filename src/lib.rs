@@ -104,7 +104,7 @@
 //! - [`poll`]: Cross-platform polling abstraction and handler registry
 //! - [`error`]: Error types and result handling
 //!
-//! For comprehensive examples and architectural details, see the [README](../README.md) 
+//! For comprehensive examples and architectural details, see the [README](../README.md)
 //! and [Architecture Guide](../docs/Arch.md).
 
 #![cfg_attr(feature = "unstable-mpmc", feature(mpmc_channel))]
@@ -175,7 +175,7 @@ pub mod prelude {
 /// let event_loop = EventLoop::default();
 /// let addr: SocketAddr = "127.0.0.1:0".parse()?;
 /// let mut listener = TcpListener::bind(addr)?;
-/// 
+///
 /// event_loop.register(&mut listener, Token(0), Interest::READABLE, MyHandler)?;
 /// event_loop.run()?; // Blocks until stopped
 /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -206,7 +206,7 @@ impl Default for EventLoop {
     /// - 100ms poll timeout ([`DEFAULT_POLL_TIMEOUT_MS`])
     ///
     /// # Panics
-    /// 
+    ///
     /// Panics if the reactor cannot be initialized with default settings.
     fn default() -> Self {
         let reactor = reactor::Reactor::new(
@@ -228,7 +228,7 @@ impl EventLoop {
     /// * `poll_timeout_ms` - Poll timeout in milliseconds (balance between latency and CPU usage)
     ///
     /// # Errors
-    /// 
+    ///
     /// Returns an error if:
     /// - The reactor cannot be initialized
     /// - The thread pool cannot be created
@@ -264,7 +264,7 @@ impl EventLoop {
     /// * `handler` - Event handler that will process events from this source
     ///
     /// # Errors
-    /// 
+    ///
     /// Returns an error if:
     /// - The token is already in use
     /// - The source cannot be registered with the underlying poll mechanism
@@ -322,7 +322,7 @@ impl EventLoop {
     /// * `token` - Token associated with the source during registration
     ///
     /// # Errors
-    /// 
+    ///
     /// Returns an error if:
     /// - The source is not currently registered
     /// - The deregistration fails at the OS level
@@ -370,7 +370,7 @@ impl EventLoop {
     /// is stopped or encounters a fatal error.
     ///
     /// # Errors
-    /// 
+    ///
     /// Returns an error if:
     /// - The polling mechanism fails
     /// - The thread pool encounters a fatal error

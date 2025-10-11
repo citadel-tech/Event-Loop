@@ -2,9 +2,7 @@
 use std::sync::mpmc as channel;
 #[cfg(not(feature = "unstable-mpmc"))]
 use std::sync::mpsc as channel;
-use std::{
-    sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
 const IO_BUFFER_SIZE: usize = 8192;
 
 #[derive(Clone)]

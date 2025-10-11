@@ -1,9 +1,9 @@
 use crate::{error::Result, poll::PollHandle, thread_pool::ThreadPool};
-use mio::{Events, event::Event};
+use mio::{event::Event, Events};
 use std::{
     sync::{
-        Arc, RwLock,
         atomic::{AtomicBool, Ordering},
+        Arc, RwLock,
     },
     time::Duration,
 };
