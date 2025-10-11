@@ -1,4 +1,4 @@
-use mill_io::{EventHandler, EventLoop, error::Result};
+use mill_io::{error::Result, EventHandler, EventLoop};
 use mio::{Interest, Token};
 use std::{
     collections::HashMap,
@@ -87,7 +87,6 @@ impl FileWatcher {
                 FileEventHandler {
                     token,
                     path: path.clone(),
-                    watches: self.watches.clone(),
                     inotify: self.inotify.clone(),
                 },
             )?;
@@ -114,7 +113,6 @@ impl FileWatcher {
 pub struct FileEventHandler {
     token: Token,
     path: PathBuf,
-    watches: Arc<Mutex<HashMap<Token, PathBuf>>>,
     #[cfg(target_os = "linux")]
     inotify: Arc<Mutex<inotify::Inotify>>,
 }
@@ -203,7 +201,10 @@ fn main() -> Result<()> {
 
     for path in &paths_to_watch {
         if !path.exists() {
-            eprintln!("Error: Path {:?} does not exist", path.canonicalize().unwrap());
+            eprintln!(
+                "Error: Path {:?} does not exist",
+                path.canonicalize().unwrap()
+            );
             return Ok(());
         }
     }
@@ -215,7 +216,11 @@ fn main() -> Result<()> {
 
     for path in &paths_to_watch {
         match watcher.watch_path(path) {
-            Ok(()) => println!("[INFO] Wathcing path={:#?}", path.canonicalize().expect("[ERROR] Could not get the path canonicalized")),
+            Ok(()) => println!(
+                "[INFO] Wathcing path={:#?}",
+                path.canonicalize()
+                    .expect("[ERROR] Could not get the path canonicalized")
+            ),
             Err(e) => {
                 eprintln!("[ERROR] Failed to watch {:?}: {}", path, e);
                 #[cfg(not(target_os = "linux"))]

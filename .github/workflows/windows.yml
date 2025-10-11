@@ -1,0 +1,74 @@
+name: Test Windows
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test-windows:
+    runs-on: windows-latest
+    
+    strategy:
+      matrix:
+        rust: [stable, beta, nightly]
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: ${{ matrix.rust }}
+    
+    - name: Cache cargo dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          target/
+        key: ${{ runner.os }}-cargo-${{ matrix.rust }}-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-${{ matrix.rust }}-
+          ${{ runner.os }}-cargo-
+    
+    - name: Build
+      run: |
+        if ("${{ matrix.rust }}" -eq "nightly") {
+          cargo build --verbose --features unstable
+        } else {
+          cargo build --verbose --no-default-features
+        }
+    
+    - name: Run tests
+      run: |
+        if ("${{ matrix.rust }}" -eq "nightly") {
+          cargo test --verbose --features unstable
+        } else {
+          cargo test --verbose --no-default-features
+        }
+    
+    - name: Run doc tests
+      run: |
+        if ("${{ matrix.rust }}" -eq "nightly") {
+          cargo test --doc --verbose --features unstable
+        } else {
+          cargo test --doc --verbose --no-default-features
+        }
+    
+    - name: Check documentation
+      run: |
+        if ("${{ matrix.rust }}" -eq "nightly") {
+          cargo doc --no-deps --features unstable
+        } else {
+          cargo doc --no-deps --no-default-features
+        }
+      env:
+        RUSTDOCFLAGS: -D warnings

@@ -1,5 +1,5 @@
-use mill_io::{EventHandler, EventLoop, ObjectPool, PooledObject, error::Result};
-use mio::{Interest, Token, net::TcpListener};
+use mill_io::{error::Result, EventHandler, EventLoop, ObjectPool, PooledObject};
+use mio::{net::TcpListener, Interest, Token};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,

@@ -1,9 +1,9 @@
 use crate::{error::Result, poll::PollHandle, thread_pool::ThreadPool};
-use mio::{Events, event::Event};
+use mio::{event::Event, Events};
 use std::{
     sync::{
-        Arc, RwLock,
         atomic::{AtomicBool, Ordering},
+        Arc, RwLock,
     },
     time::Duration,
 };
@@ -142,6 +142,7 @@ mod tests {
         handle.join().unwrap();
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_with_pipe() -> std::io::Result<()> {
         use mio::net::UnixStream;
@@ -184,6 +185,68 @@ mod tests {
         });
 
         std::io::Write::write_all(&mut stream2, b"test data")?;
+
+        handle.join().unwrap();
+
+        let count = counter.lock().unwrap();
+        let result = condition
+            .wait_timeout(count, Duration::from_millis(500))
+            .unwrap();
+
+        if !result.1.timed_out() {
+            assert_eq!(*result.0, 1);
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_with_tcp() -> std::io::Result<()> {
+        use mio::net::{TcpListener, TcpStream};
+        use std::net::SocketAddr;
+
+        let reactor =
+            Arc::new(Reactor::new(2, DEFAULT_EVENTS_CAPACITY, DEFAULT_POLL_TIMEOUT_MS).unwrap());
+        let counter = Arc::new(Mutex::new(0));
+        let condition = Arc::new(Condvar::new());
+
+        // Create a TCP listener on localhost
+        let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
+        let mut listener = TcpListener::bind(addr)?;
+        let listener_addr = listener.local_addr()?;
+
+        let handler = TestHandler {
+            counter: Arc::clone(&counter),
+            condition: Arc::clone(&condition),
+        };
+
+        let token = Token(1);
+
+        reactor
+            .poll_handle
+            .register(&mut listener, token, Interest::READABLE, handler)
+            .unwrap();
+
+        let reactor_clone = Arc::clone(&reactor);
+        let handle = std::thread::spawn(move || {
+            // Poll once
+            let events_result = {
+                let mut events = reactor_clone.events.write().unwrap();
+                reactor_clone
+                    .poll_handle
+                    .poll(&mut *events, Some(Duration::from_millis(100)))
+            };
+
+            if let Ok(_) = events_result {
+                let events = reactor_clone.events.read().unwrap();
+                for event in events.iter() {
+                    let _ = reactor_clone.dispatch_event(event.clone());
+                }
+            }
+        });
+
+        // Connect to trigger the event
+        let _stream = TcpStream::connect(listener_addr)?;
 
         handle.join().unwrap();
 

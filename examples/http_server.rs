@@ -1,7 +1,7 @@
-use mill_io::{EventHandler, EventLoop, ObjectPool, PooledObject, error::Result};
+use mill_io::{error::Result, EventHandler, EventLoop, ObjectPool, PooledObject};
 use mio::{
-    Interest, Token,
     net::{TcpListener, TcpStream},
+    Interest, Token,
 };
 use std::{
     collections::HashMap,

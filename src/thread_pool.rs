@@ -1,3 +1,4 @@
+
 #[cfg(feature = "unstable-mpmc")]
 use std::sync::mpmc as channel;
 #[cfg(not(feature = "unstable-mpmc"))]
@@ -79,22 +80,20 @@ impl Worker {
         let thread = Some(
             Builder::new()
                 .name(format!("thread-pool-worker-{id}"))
-                .spawn(move || {
-                    loop {
-                        let task = {
-                            let receiver = reciever.lock().unwrap();
-                            if let Ok(message) = receiver.recv() {
-                                match message {
-                                    WorkerMessage::Task(task) => task,
-                                    WorkerMessage::Terminate => break,
-                                }
-                            } else {
-                                break;
+                .spawn(move || loop {
+                    let task = {
+                        let receiver = reciever.lock().unwrap();
+                        if let Ok(message) = receiver.recv() {
+                            match message {
+                                WorkerMessage::Task(task) => task,
+                                WorkerMessage::Terminate => break,
                             }
-                        };
+                        } else {
+                            break;
+                        }
+                    };
 
-                        task();
-                    }
+                    task();
                 })
                 .expect(&format!("Couldn't create the worker thread id={id}")),
         );
