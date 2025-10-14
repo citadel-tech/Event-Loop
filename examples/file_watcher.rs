@@ -1,10 +1,10 @@
-use mill_io::{error::Result, EventHandler, EventLoop};
-use mio::{Interest, Token};
+use mill_io::{error::Result, event::Event, EventHandler, EventLoop};
+use mio::Token;
 use std::{
     collections::HashMap,
     env,
     path::{Path, PathBuf},
-    sync::{Arc, LazyLock, Mutex, RwLock},
+    sync::{Arc, Mutex, OnceLock, RwLock},
 };
 
 #[cfg(target_os = "linux")]
@@ -12,8 +12,17 @@ use mio::unix::SourceFd;
 #[cfg(target_os = "linux")]
 use std::{ffi::OsStr, os::unix::io::AsRawFd};
 
-static EVENT_LOOP: LazyLock<EventLoop> = LazyLock::new(|| EventLoop::default());
-static CURRENT_TOKEN: LazyLock<RwLock<NextToken>> = LazyLock::new(|| RwLock::new(NextToken::new()));
+#[cfg(target_os = "linux")]
+use mio::Interest;
+
+static EVENT_LOOP: OnceLock<EventLoop> = OnceLock::new();
+fn event_loop() -> &'static EventLoop {
+    EVENT_LOOP.get_or_init(EventLoop::default)
+}
+static CURRENT_TOKEN: OnceLock<RwLock<NextToken>> = OnceLock::new();
+fn current_token_lock() -> &'static RwLock<NextToken> {
+    CURRENT_TOKEN.get_or_init(|| RwLock::new(NextToken::new()))
+}
 
 struct NextToken(usize);
 
@@ -63,7 +72,7 @@ impl FileWatcher {
 
     pub fn watch_path<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         let path = path.as_ref().to_path_buf();
-        let token = CURRENT_TOKEN.write()?.next();
+        let token = current_token_lock().write()?.next();
 
         println!("[INFO] Watching path={:?}, token={:?}", path, token);
 
@@ -80,7 +89,7 @@ impl FileWatcher {
             )?;
             let source_fd = inotify.as_raw_fd();
             let mut source_fd = SourceFd(&source_fd);
-            EVENT_LOOP.register(
+            event_loop().register(
                 &mut source_fd,
                 token,
                 Interest::READABLE,
@@ -116,9 +125,8 @@ pub struct FileEventHandler {
     #[cfg(target_os = "linux")]
     inotify: Arc<Mutex<inotify::Inotify>>,
 }
-
 impl EventHandler for FileEventHandler {
-    fn handle_event(&self, event: &mio::event::Event) {
+    fn handle_event(&self, event: &Event) {
         if event.token() != self.token {
             return;
         }
@@ -140,7 +148,6 @@ impl EventHandler for FileEventHandler {
                     }
                 }
             }
-
             #[cfg(not(target_os = "linux"))]
             {
                 println!("File event detected for path: {:?}", self.path);
@@ -175,6 +182,7 @@ impl FileEventHandler {
         self.handle_file_event(file_event);
     }
 
+    #[cfg(target_os = "linux")]
     fn handle_file_event(&self, event: FileEvent) {
         match event {
             FileEvent::Created(path) => {
@@ -205,6 +213,10 @@ fn main() -> Result<()> {
                 "Error: Path {:?} does not exist",
                 path.canonicalize().unwrap()
             );
+            eprintln!(
+                "Error: Path {:?} does not exist",
+                path.canonicalize().unwrap()
+            );
             return Ok(());
         }
     }
@@ -217,7 +229,7 @@ fn main() -> Result<()> {
     for path in &paths_to_watch {
         match watcher.watch_path(path) {
             Ok(()) => println!(
-                "[INFO] Wathcing path={:#?}",
+                "[INFO] Watching path={:#?}",
                 path.canonicalize()
                     .expect("[ERROR] Could not get the path canonicalized")
             ),
@@ -238,7 +250,7 @@ fn main() -> Result<()> {
         println!("[WARNING[ Consider running on Linux for full functionality.");
     }
 
-    match EVENT_LOOP.run() {
+    match event_loop().run() {
         Ok(()) => println!("[INFO] File watcher stopped cleanly"),
         Err(e) => eprintln!("[ERROR] File watcher error: {}", e),
     }

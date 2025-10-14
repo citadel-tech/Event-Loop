@@ -1,9 +1,9 @@
-use mio::{event::Event, Interest};
+use crate::event::Event;
+use mio::Interest;
 
 pub trait EventHandler {
     fn handle_event(&self, event: &Event);
 }
-
 pub struct HandlerEntry {
     pub handler: Box<dyn EventHandler + Send + Sync>,
     pub interest: Interest,

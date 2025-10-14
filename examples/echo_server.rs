@@ -1,4 +1,4 @@
-use mill_io::{error::Result, EventHandler, EventLoop, ObjectPool, PooledObject};
+use mill_io::{error::Result, event::Event, EventHandler, EventLoop, ObjectPool, PooledObject};
 use mio::{
     net::{TcpListener, TcpStream},
     Interest, Token,
@@ -7,13 +7,18 @@ use std::{
     collections::HashMap,
     io::{self, Read, Write},
     net::SocketAddr,
-    sync::{Arc, LazyLock, Mutex, RwLock},
+    sync::{Arc, Mutex, OnceLock, RwLock},
 };
 
-static EVENT_LOOP: LazyLock<EventLoop> = LazyLock::new(|| EventLoop::default());
-
+static EVENT_LOOP: OnceLock<EventLoop> = OnceLock::new();
+fn event_loop() -> &'static EventLoop {
+    EVENT_LOOP.get_or_init(EventLoop::default)
+}
 const LISTENER: Token = Token(1);
-static CURRENT_TOKEN: LazyLock<RwLock<NextToken>> = LazyLock::new(|| RwLock::new(NextToken::new()));
+static CURRENT_TOKEN: OnceLock<RwLock<NextToken>> = OnceLock::new();
+fn current_token_lock() -> &'static RwLock<NextToken> {
+    CURRENT_TOKEN.get_or_init(|| RwLock::new(NextToken::new()))
+}
 
 struct NextToken(usize);
 
@@ -54,13 +59,13 @@ impl EchoServerHandler {
             match self.listener.lock().unwrap().accept() {
                 Ok((mut stream, _)) => {
                     println!("handling stream: addr={:#?}", stream.local_addr());
-                    let token = CURRENT_TOKEN.write()?.next();
+                    let token = current_token_lock().write()?.next();
                     let connections_clone = connections.clone();
                     let buffer_pool_clone = buffer_pool.clone();
 
                     println!("register new event: token={token:?}");
 
-                    EVENT_LOOP.register(
+                    event_loop().register(
                         &mut stream,
                         token,
                         Interest::READABLE | Interest::WRITABLE,
@@ -88,7 +93,7 @@ impl EchoServerHandler {
 }
 
 impl EventHandler for EchoServerHandler {
-    fn handle_event(&self, event: &mio::event::Event) {
+    fn handle_event(&self, event: &Event) {
         if event.token() == LISTENER {
             if let Err(e) = self.handle_listener_event(self.connections.clone(), &self.buffer_pool)
             {
@@ -109,7 +114,7 @@ pub struct ClientHandler {
 }
 
 impl EventHandler for ClientHandler {
-    fn handle_event(&self, event: &mio::event::Event) {
+    fn handle_event(&self, event: &Event) {
         let mut connections = self.connections.lock().unwrap();
         if let Some(stream) = connections.get_mut(&self.token) {
             if event.is_readable() {
@@ -119,7 +124,7 @@ impl EventHandler for ClientHandler {
                         println!("client disconnected: {:?}", self.token);
                         if let Some(mut disconnected_stream) = connections.remove(&self.token) {
                             if let Err(e) =
-                                EVENT_LOOP.deregister(&mut disconnected_stream, self.token)
+                                event_loop().deregister(&mut disconnected_stream, self.token)
                             {
                                 eprintln!("Failed to deregister client {:?}: {}", self.token, e);
                             }
@@ -136,7 +141,7 @@ impl EventHandler for ClientHandler {
                             eprintln!("Error writing to client {:?}: {}", self.token, e);
                             if let Some(mut disconnected_stream) = connections.remove(&self.token) {
                                 if let Err(e) =
-                                    EVENT_LOOP.deregister(&mut disconnected_stream, self.token)
+                                    event_loop().deregister(&mut disconnected_stream, self.token)
                                 {
                                     eprintln!(
                                         "Failed to deregister client {:?}: {}",
@@ -153,7 +158,7 @@ impl EventHandler for ClientHandler {
                         eprintln!("Error reading from client {:?}: {}", self.token, e);
                         if let Some(mut disconnected_stream) = connections.remove(&self.token) {
                             if let Err(e) =
-                                EVENT_LOOP.deregister(&mut disconnected_stream, self.token)
+                                event_loop().deregister(&mut disconnected_stream, self.token)
                             {
                                 eprintln!("Failed to deregister client {:?}: {}", self.token, e);
                             }
@@ -172,7 +177,7 @@ fn main() -> Result<()> {
 
     let server_handler = EchoServerHandler::new(Arc::clone(&listener))?;
 
-    EVENT_LOOP.register::<EchoServerHandler, TcpListener>(
+    event_loop().register::<EchoServerHandler, TcpListener>(
         &mut listener.lock().unwrap(),
         LISTENER,
         Interest::READABLE,
@@ -180,7 +185,7 @@ fn main() -> Result<()> {
     )?;
 
     println!("Echo server listening on {}", addr);
-    EVENT_LOOP.run()?;
+    event_loop().run()?;
 
     Ok(())
 }
