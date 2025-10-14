@@ -1,16 +1,16 @@
-use mio::{event::Event, Token};
+use mio::{event::Event as MioEvent, Token};
 use std::fmt;
 
-/// Unified event struct that abstracts away platform differences by wrapping mio::event::Event
-pub struct UnifiedEvent {
+/// Unified event struct that abstracts away platform differences by wrapping mio::event::Event as MioEvent
+pub struct Event {
     token: Token,
     is_readable: bool,
     is_writable: bool,
 }
 
-impl fmt::Debug for UnifiedEvent {
+impl fmt::Debug for Event {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("UnifiedEvent")
+        f.debug_struct("Event")
             .field("token", &self.token)
             .field("is_readable", &self.is_readable)
             .field("is_writable", &self.is_writable)
@@ -18,7 +18,7 @@ impl fmt::Debug for UnifiedEvent {
     }
 }
 
-impl UnifiedEvent {
+impl Event {
     pub fn token(&self) -> Token {
         self.token
     }
@@ -32,8 +32,8 @@ impl UnifiedEvent {
     }
 }
 
-impl From<&Event> for UnifiedEvent {
-    fn from(event: &Event) -> Self {
+impl From<&MioEvent> for Event {
+    fn from(event: &MioEvent) -> Self {
         Self {
             token: event.token(),
             is_readable: event.is_readable(),

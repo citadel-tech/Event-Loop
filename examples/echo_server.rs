@@ -1,4 +1,4 @@
-use mill_io::{error::Result, EventHandler, EventLoop, ObjectPool, PooledObject, UnifiedEvent};
+use mill_io::{error::Result, event::Event, EventHandler, EventLoop, ObjectPool, PooledObject};
 use mio::{
     net::{TcpListener, TcpStream},
     Interest, Token,
@@ -93,7 +93,7 @@ impl EchoServerHandler {
 }
 
 impl EventHandler for EchoServerHandler {
-    fn handle_event(&self, event: &UnifiedEvent) {
+    fn handle_event(&self, event: &Event) {
         if event.token() == LISTENER {
             if let Err(e) = self.handle_listener_event(self.connections.clone(), &self.buffer_pool)
             {
@@ -114,7 +114,7 @@ pub struct ClientHandler {
 }
 
 impl EventHandler for ClientHandler {
-    fn handle_event(&self, event: &UnifiedEvent) {
+    fn handle_event(&self, event: &Event) {
         let mut connections = self.connections.lock().unwrap();
         if let Some(stream) = connections.get_mut(&self.token) {
             if event.is_readable() {

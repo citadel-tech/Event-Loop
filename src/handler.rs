@@ -1,8 +1,8 @@
-use crate::UnifiedEvent;
+use crate::event::Event;
 use mio::Interest;
 
 pub trait EventHandler {
-    fn handle_event(&self, event: &UnifiedEvent);
+    fn handle_event(&self, event: &Event);
 }
 pub struct HandlerEntry {
     pub handler: Box<dyn EventHandler + Send + Sync>,

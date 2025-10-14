@@ -86,7 +86,7 @@ impl PollHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::UnifiedEvent;
+    use crate::event::Event;
     use mio::event::Source;
     use mio::Events;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -148,7 +148,7 @@ mod tests {
         }
 
         impl EventHandler for TestHandler {
-            fn handle_event(&self, _event: &UnifiedEvent) {
+            fn handle_event(&self, _event: &Event) {
                 self.called.store(true, Ordering::SeqCst);
             }
         }
@@ -188,7 +188,7 @@ mod tests {
 
         struct NoopHandler;
         impl EventHandler for NoopHandler {
-            fn handle_event(&self, _event: &UnifiedEvent) {}
+            fn handle_event(&self, _event: &Event) {}
         }
 
         assert!(

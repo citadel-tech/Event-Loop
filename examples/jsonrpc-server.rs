@@ -1,4 +1,4 @@
-use mill_io::{error::Result, EventHandler, EventLoop, ObjectPool, PooledObject, UnifiedEvent};
+use mill_io::{error::Result, event::Event, EventHandler, EventLoop, ObjectPool, PooledObject};
 use mio::{net::TcpListener, Interest, Token};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -121,7 +121,7 @@ impl RpcServer {
 }
 
 impl EventHandler for RpcServer {
-    fn handle_event(&self, event: &UnifiedEvent) {
+    fn handle_event(&self, event: &Event) {
         if event.token() == LISTENER_TOKEN && event.is_readable() {
             if let Err(e) = self.accept_connections() {
                 eprintln!("[ERROR] Couldn't accept connections: {}", e);
@@ -219,7 +219,7 @@ impl RpcClient {
 }
 
 impl EventHandler for RpcClient {
-    fn handle_event(&self, event: &UnifiedEvent) {
+    fn handle_event(&self, event: &Event) {
         println!("[INFO] handling event for client: {:?}", self.token);
         if !event.is_readable() {
             return;

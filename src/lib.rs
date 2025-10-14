@@ -31,14 +31,14 @@
 //! ## Quick Start
 //!
 //! ```rust,no_run
-//! use mill_io::{EventLoop, EventHandler, UnifiedEvent};
+//! use mill_io::{EventLoop, EventHandler, event::Event};
 //! use mio::{net::TcpListener, Interest, Token};
 //! use std::net::SocketAddr;
 //!
 //! struct EchoHandler;
 //!
 //! impl EventHandler for EchoHandler {
-//!     fn handle_event(&self, event: &UnifiedEvent) {
+//!     fn handle_event(&self, event: &Event) {
 //!         println!("Received event: {:?}", event);
 //!         // Handle incoming connections and data
 //!     }
@@ -102,7 +102,7 @@ pub mod object_pool;
 pub mod poll;
 pub mod reactor;
 pub mod thread_pool;
-pub use event::UnifiedEvent;
+pub use event::Event;
 pub use handler::EventHandler;
 pub use object_pool::{ObjectPool, PooledObject};
 
@@ -147,13 +147,13 @@ pub mod prelude {
 /// Basic usage with default configuration:
 ///
 /// ```rust,no_run
-/// use mill_io::{EventLoop, EventHandler, UnifiedEvent};
+/// use mill_io::{EventLoop, EventHandler, event::Event};
 /// use mio::{net::TcpListener, Interest, Token};
 /// use std::net::SocketAddr;
 ///
 /// struct MyHandler;
 /// impl EventHandler for MyHandler {
-///     fn handle_event(&self, event: &UnifiedEvent) {
+///     fn handle_event(&self, event: &Event) {
 ///         println!("Event received: {:?}", event);
 ///     }
 /// }
@@ -259,13 +259,13 @@ impl EventLoop {
     /// ## Example
     ///
     /// ```rust,no_run
-    /// use mill_io::{EventLoop, EventHandler,event::UnifiedEvent};
+    /// use mill_io::{EventLoop, EventHandler,event::Event};
     /// use mio::{net::TcpListener, Interest, Token};
     /// use std::net::SocketAddr;
     ///
     /// struct ConnectionHandler;
     /// impl EventHandler for ConnectionHandler {
-    ///     fn handle_event(&self, event: &UnifiedEvent) {
+    ///     fn handle_event(&self, event: &Event) {
     ///         // Handle new connections
     ///     }
     /// }
@@ -318,13 +318,13 @@ impl EventLoop {
     /// ## Example
     ///
     /// ```rust,no_run
-    /// use mill_io::{EventLoop, EventHandler,event::UnifiedEvent};
+    /// use mill_io::{EventLoop, EventHandler,event::Event};
     /// use mio::{net::TcpListener, Interest, Token};
     /// use std::net::SocketAddr;
     ///
     /// struct Handler;
     /// impl EventHandler for Handler {
-    ///     fn handle_event(&self, _: &UnifiedEvent) {}
+    ///     fn handle_event(&self, _: &Event) {}
     /// }
     /// fn main() -> Result<(), Box<dyn std::error::Error>> {
     ///     

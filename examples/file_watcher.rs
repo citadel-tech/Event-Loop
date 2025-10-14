@@ -1,4 +1,4 @@
-use mill_io::{error::Result, EventHandler, EventLoop, UnifiedEvent};
+use mill_io::{error::Result, event::Event, EventHandler, EventLoop};
 use mio::Token;
 use std::{
     collections::HashMap,
@@ -126,7 +126,7 @@ pub struct FileEventHandler {
     inotify: Arc<Mutex<inotify::Inotify>>,
 }
 impl EventHandler for FileEventHandler {
-    fn handle_event(&self, event: &UnifiedEvent) {
+    fn handle_event(&self, event: &Event) {
         if event.token() != self.token {
             return;
         }

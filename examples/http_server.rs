@@ -1,4 +1,4 @@
-use mill_io::{error::Result, EventHandler, EventLoop, ObjectPool, PooledObject, UnifiedEvent};
+use mill_io::{error::Result, event::Event, EventHandler, EventLoop, ObjectPool, PooledObject};
 use mio::{
     net::{TcpListener, TcpStream},
     Interest, Token,
@@ -178,7 +178,7 @@ impl HttpServer {
 }
 
 impl EventHandler for HttpServer {
-    fn handle_event(&self, event: &UnifiedEvent) {
+    fn handle_event(&self, event: &Event) {
         if event.token() == LISTENER_TOKEN && event.is_readable() {
             if let Err(e) = self.accept_connections() {
                 eprintln!("Error accepting connections: {}", e);
@@ -243,7 +243,7 @@ impl HttpClient {
 }
 
 impl EventHandler for HttpClient {
-    fn handle_event(&self, event: &UnifiedEvent) {
+    fn handle_event(&self, event: &Event) {
         if !event.is_readable() {
             return;
         }
