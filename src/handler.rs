@@ -1,5 +1,4 @@
-use crate::event::Event;
-use mio::Interest;
+use mio::{event::Event, Interest};
 
 pub trait EventHandler {
     fn handle_event(&self, event: &Event);

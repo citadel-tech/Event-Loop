@@ -86,8 +86,7 @@ impl PollHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::event::Event;
-    use mio::event::Source;
+    use mio::event::{Event, Source};
     use mio::Events;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Duration;
