@@ -23,7 +23,7 @@ rust-version = "1.70"
 
 [dependencies]
 lockfree = "0.5.1"
-mio = { version = "1.0.3", features = ["os-poll", "net"] }
+mio = { version = "1.1.0", features = ["os-poll", "net"] }
 
 [dev-dependencies]
 serde ={ version = "1.0.219", features = ["derive"] }
