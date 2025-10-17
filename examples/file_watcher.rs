@@ -1,5 +1,5 @@
-use mill_io::{error::Result, event::Event, EventHandler, EventLoop};
-use mio::Token;
+use mill_io::{error::Result, EventHandler, EventLoop};
+use mio::{event::Event, Token};
 use std::{
     collections::HashMap,
     env,

@@ -1,5 +1,6 @@
-use mill_io::{error::Result, event::Event, EventHandler, EventLoop, ObjectPool, PooledObject};
+use mill_io::{error::Result, EventHandler, EventLoop, ObjectPool, PooledObject};
 use mio::{
+    event::Event,
     net::{TcpListener, TcpStream},
     Interest, Token,
 };

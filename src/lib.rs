@@ -31,8 +31,8 @@
 //! ## Quick Start
 //!
 //! ```rust,no_run
-//! use mill_io::{EventLoop, EventHandler, event::Event};
-//! use mio::{net::TcpListener, Interest, Token};
+//! use mill_io::{EventLoop, EventHandler};
+//! use mio::{net::TcpListener, Interest, Token, event::Event};
 //! use std::net::SocketAddr;
 //!
 //! struct EchoHandler;
@@ -96,14 +96,13 @@
 
 use mio::{Interest, Token};
 pub mod error;
-pub mod event;
 pub mod handler;
 pub mod object_pool;
 pub mod poll;
 pub mod reactor;
 pub mod thread_pool;
-pub use event::Event;
 pub use handler::EventHandler;
+pub use mio::event::Event;
 pub use object_pool::{ObjectPool, PooledObject};
 
 use crate::{
@@ -147,8 +146,8 @@ pub mod prelude {
 /// Basic usage with default configuration:
 ///
 /// ```rust,no_run
-/// use mill_io::{EventLoop, EventHandler, event::Event};
-/// use mio::{net::TcpListener, Interest, Token};
+/// use mill_io::{EventLoop, EventHandler};
+/// use mio::{net::TcpListener, Interest, Token, event::Event};
 /// use std::net::SocketAddr;
 ///
 /// struct MyHandler;
@@ -259,8 +258,8 @@ impl EventLoop {
     /// ## Example
     ///
     /// ```rust,no_run
-    /// use mill_io::{EventLoop, EventHandler,event::Event};
-    /// use mio::{net::TcpListener, Interest, Token};
+    /// use mill_io::{EventLoop, EventHandler};
+    /// use mio::{net::TcpListener, Interest, Token, event::Event};
     /// use std::net::SocketAddr;
     ///
     /// struct ConnectionHandler;
@@ -318,8 +317,8 @@ impl EventLoop {
     /// ## Example
     ///
     /// ```rust,no_run
-    /// use mill_io::{EventLoop, EventHandler,event::Event};
-    /// use mio::{net::TcpListener, Interest, Token};
+    /// use mill_io::{EventLoop, EventHandler};
+    /// use mio::{net::TcpListener, Interest, Token, event::Event};
     /// use std::net::SocketAddr;
     ///
     /// struct Handler;

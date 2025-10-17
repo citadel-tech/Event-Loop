@@ -1,5 +1,5 @@
-use crate::{error::Result, event::Event, poll::PollHandle, thread_pool::ThreadPool};
-use mio::{event::Event as MioEvent, Events};
+use crate::{error::Result, poll::PollHandle, thread_pool::ThreadPool};
+use mio::{event::Event, Events};
 use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -65,12 +65,11 @@ impl Reactor {
         }
     }
 
-    pub fn dispatch_event(&self, event: MioEvent) -> Result<()> {
+    pub fn dispatch_event(&self, event: Event) -> Result<()> {
         let token = event.token();
         let is_readable = event.is_readable();
         let is_writable = event.is_writable();
 
-        let unified_event: Event = Event::from(&event);
         let registry = self.poll_handle.get_registery();
 
         self.pool.exec(move || {
@@ -81,7 +80,7 @@ impl Reactor {
                 if (interest.is_readable() && is_readable)
                     || (interest.is_writable() && is_writable)
                 {
-                    handler.handle_event(&unified_event);
+                    handler.handle_event(&event);
                 }
             }
         })
