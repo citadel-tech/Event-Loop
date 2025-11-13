@@ -1,6 +1,13 @@
 use crate::error::Result;
 use std::io::Error;
-/// Unique identifier for connections
+
+/// Unique identifier for connections.
+///
+/// Each TCP connection is assigned a unique ConnectionId when accepted or established.
+/// The ID is generated atomically and remains constant for the connection's lifetime.
+///
+/// ConnectionIds are used to target specific connections for operations like sending
+/// data or closing connections.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ConnectionId(pub u64);
 
@@ -14,7 +21,24 @@ impl ConnectionId {
     }
 }
 
-/// Trait for handling network events with typed data
+/// Handler for network events on TCP connections.
+///
+/// Implement this trait to define how your application responds to network events.
+/// All methods except on_data have default implementations that do nothing.
+///
+/// The handler is invoked by worker threads from the event loop's thread pool,
+/// so implementations must be thread-safe (Send + Sync).
+///
+/// ## Execution Context
+///
+/// Handler methods are called from worker threads in the thread pool. Multiple
+/// handlers may execute concurrently for different connections. Your implementation
+/// should be efficient to avoid blocking worker threads.
+///
+/// ## Error Handling
+///
+/// Return errors from handler methods to indicate processing failures. The connection
+/// will be closed automatically when handlers return errors from on_data.
 pub trait NetworkHandler: Send + Sync + Logger + 'static {
     /// Called when connection is established (TCP only)
     fn on_connect(&self, conn_id: ConnectionId) -> Result<()> {
@@ -55,14 +79,20 @@ pub enum LogLevel {
     Error,
 }
 
-/// Logger trait for network events
+/// Logger trait for network events.
 ///
-/// Library users can implement this trait to handle logging however they prefer.
+/// This trait allows library users to integrate their own logging solutions.
+/// NetworkHandler requires Logger implementation so handlers can emit logs
+/// without coupling to specific logging frameworks.
+///
+/// The logger is shared across all connections and must be thread-safe.
 pub trait Logger: Send + Sync {
     fn log(&self, level: LogLevel, message: &str);
 }
 
-/// Default no-op logger that discards all messages
+/// Default no-op logger that discards all messages.
+///
+/// Use this when you don't need logging or want to implement your own.
 #[derive(Default, Clone)]
 pub struct NoOpLogger;
 

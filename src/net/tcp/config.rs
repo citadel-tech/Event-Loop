@@ -2,8 +2,20 @@ use std::{net::SocketAddr, sync::Arc};
 
 use crate::net::tcp::traits::{Logger, NoOpLogger};
 
-
-/// Configuration for TCP server
+/// Configuration for TCP server.
+///
+/// Controls server behavior including bind address, buffer sizes, connection limits,
+/// and socket options. Use TcpServerConfig::builder() for ergonomic construction.
+///
+/// ## Socket Options
+///
+/// - no_delay: When enabled (default), disables Nagle's algorithm for lower latency
+/// - keep_alive: Configures SO_KEEPALIVE to detect dead connections
+///
+/// ## Resource Limits
+///
+/// - buffer_size: Size of read buffers allocated from the pool
+/// - max_connections: Hard limit on concurrent connections (None for unlimited)
 #[derive(Clone)]
 pub struct TcpServerConfig {
     /// Address to bind to
@@ -40,7 +52,10 @@ impl Default for TcpServerConfig {
     }
 }
 
-/// Builder for TcpServerConfig
+/// Builder for TcpServerConfig using the builder pattern.
+///
+/// All fields are optional and will use defaults from TcpServerConfig::default()
+/// if not explicitly set.
 pub struct TcpServerConfigBuilder {
     address: Option<SocketAddr>,
     buffer_size: Option<usize>,

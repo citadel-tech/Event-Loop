@@ -1,7 +1,92 @@
-//! High-level networking abstractions for Mill-IO event loop
+//! TCP server and client implementations with lockfree connection management.
 //!
-//! This module provides TCP and UDP networking components that integrate
-//! seamlessly with Mill-IO's event loop architecture.
+//! This module provides high-performance TCP networking built on Mill-IO's event loop.
+//! 
+//! Each TCP connection is assigned a unique ConnectionId generated atomically.
+//! The connection state is stored in a lockfree map, allowing concurrent access
+//! from multiple worker threads without blocking.
+//!
+//! ```text
+//! Connection Storage:
+//!   LockfreeMap<u64, TcpConnection>
+//!        │
+//!        ├──> ConnId(1) ──> TcpConnection { stream, token, addr }
+//!        ├──> ConnId(2) ──> TcpConnection { stream, token, addr }
+//!        └──> ConnId(N) ──> TcpConnection { stream, token, addr }
+//! ```
+//!
+//! ## Event Handling Pipeline
+//!
+//! ```text
+//! 1. Listener Events:
+//!    New Connection ──> TcpListenerHandler::handle_event()
+//!        - accept() ──> Create ConnectionId
+//!        - Register TcpConnectionHandler with EventLoop
+//!        - Insert into LockfreeMap
+//!        - Call handler.on_connect()
+//!
+//! 2. Connection Events:
+//!    Readable Event ──> TcpConnectionHandler::handle_event()
+//!        - Read from stream into pooled buffer
+//!        - Call handler.on_data()
+//!        - If EOF: disconnect()
+//!
+//!    Writable Event ──> TcpConnectionHandler::handle_event()
+//!        - Call handler.on_writable()
+//!
+//! 3. Disconnection:
+//!    disconnect() ──> Remove from LockfreeMap
+//!        - Deregister from EventLoop
+//!        - Call handler.on_disconnect()
+//! ```
+//!
+//! ## Configuration
+//!
+//! TcpServerConfig uses the builder pattern for ergonomic configuration:
+//!
+//! ```rust
+//! use mill_io::net::tcp::config::TcpServerConfig;
+//! # use std::sync::Arc;
+//! # use mill_io::net::tcp::traits::NoOpLogger;
+//!
+//! let config = TcpServerConfig::builder()
+//!     .address("0.0.0.0:8080".parse().unwrap())
+//!     .buffer_size(16384)              // Larger buffers for high throughput
+//!     .max_connections(1000)           // Limit concurrent connections
+//!     .no_delay(true)                  // Disable Nagle's algorithm
+//!     .logger(Arc::new(NoOpLogger))    // Custom logging implementation
+//!     .build();
+//! ```
+//!
+//! ## Handler Implementation
+//!
+//! Your handler must implement both NetworkHandler and Logger traits. The Logger
+//! trait requirement allows handlers to emit their own logging without coupling
+//! to a specific logging framework.
+//!
+//! ```rust
+//! use mill_io::net::tcp::traits::{NetworkHandler, ConnectionId, Logger, LogLevel};
+//! use mill_io::error::Result;
+//!
+//! struct MyHandler;
+//!
+//! impl Logger for MyHandler {
+//!     fn log(&self, level: LogLevel, message: &str) {
+//!         match level {
+//!             LogLevel::Error => eprintln!("{}", message),
+//!             LogLevel::Info => println!("{}", message),
+//!             _ => {}
+//!         }
+//!     }
+//! }
+//!
+//! impl NetworkHandler for MyHandler {
+//!     fn on_data(&self, conn_id: ConnectionId, data: &[u8]) -> Result<()> {
+//!         self.log(LogLevel::Info, &format!("Received {} bytes from {:?}", data.len(), conn_id));
+//!         Ok(())
+//!     }
+//! }
+//! ```
 
 pub mod config;
 pub mod traits;
