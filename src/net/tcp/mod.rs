@@ -91,16 +91,16 @@
 pub mod config;
 pub mod traits;
 
-use crate::error::Result;
-use mio::event::Event;
-use std::io;
-use traits::{ConnectionId, LogLevel, Logger, NetworkHandler, NoOpLogger};
+pub use config::TcpServerConfig;
+pub use traits::*;
 
+use crate::error::Result;
 use crate::{EventHandler, EventLoop, ObjectPool, PooledObject};
-use config::TcpServerConfig;
 use lockfree::map::Map as LockfreeMap;
+use mio::event::Event;
 use mio::net::{TcpListener, TcpStream};
 use mio::{Interest, Token};
+use std::io;
 use std::io::{Read, Write};
 use std::net::SocketAddr;
 use std::sync::{

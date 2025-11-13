@@ -65,7 +65,7 @@
 //!     .build();
 //!
 //! let server = TcpServer::new(config, EchoHandler)?;
-//! let event_loop = EventLoop::new()?;
+//! let event_loop = EventLoop::default();
 //!
 //! server.start(&event_loop, mio::Token(0))?;
 //! event_loop.run()?;
