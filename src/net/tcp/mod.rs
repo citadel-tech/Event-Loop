@@ -3,145 +3,34 @@
 //! This module provides TCP and UDP networking components that integrate
 //! seamlessly with Mill-IO's event loop architecture.
 
-pub(crate) mod traits;
+pub mod config;
+pub mod traits;
 
 use crate::error::Result;
 use mio::event::Event;
 use std::io;
-use traits::{ConnectionId, NetworkHandler, Logger, LogLevel, NoOpLogger};
+use traits::{ConnectionId, LogLevel, Logger, NetworkHandler, NoOpLogger};
 
 use crate::{EventHandler, EventLoop, ObjectPool, PooledObject};
+use config::TcpServerConfig;
+use lockfree::map::Map as LockfreeMap;
 use mio::net::{TcpListener, TcpStream};
 use mio::{Interest, Token};
-use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::SocketAddr;
-use std::sync::{Arc, Mutex, RwLock};
-
-/// Configuration for TCP server
-#[derive(Clone)]
-pub struct TcpServerConfig {
-    /// Address to bind to
-    pub address: SocketAddr,
-    /// Number of connection buffer size
-    pub buffer_size: usize,
-    /// Maximum number of connections
-    pub max_connections: Option<usize>,
-    /// Enable TCP_NODELAY
-    pub no_delay: bool,
-    /// SO_KEEPALIVE setting
-    pub keep_alive: Option<std::time::Duration>,
-    /// Logger for network events
-    pub logger: Arc<dyn Logger>,
-}
-
-impl TcpServerConfig {
-    /// Create a new builder for TcpServerConfig
-    pub fn builder() -> TcpServerConfigBuilder {
-        TcpServerConfigBuilder::new()
-    }
-}
-
-impl Default for TcpServerConfig {
-    fn default() -> Self {
-        Self {
-            address: "127.0.0.1:8080".parse().unwrap(),
-            buffer_size: 8192,
-            max_connections: None,
-            no_delay: true,
-            keep_alive: Some(std::time::Duration::from_secs(60)),
-            logger: Arc::new(NoOpLogger),
-        }
-    }
-}
-
-/// Builder for TcpServerConfig
-pub struct TcpServerConfigBuilder {
-    address: Option<SocketAddr>,
-    buffer_size: Option<usize>,
-    max_connections: Option<usize>,
-    no_delay: Option<bool>,
-    keep_alive: Option<Option<std::time::Duration>>,
-    logger: Option<Arc<dyn Logger>>,
-}
-
-impl TcpServerConfigBuilder {
-    /// Create a new builder with default values
-    pub fn new() -> Self {
-        Self {
-            address: None,
-            buffer_size: None,
-            max_connections: None,
-            no_delay: None,
-            keep_alive: None,
-            logger: None,
-        }
-    }
-
-    /// Set the address to bind to
-    pub fn address(mut self, address: SocketAddr) -> Self {
-        self.address = Some(address);
-        self
-    }
-
-    /// Set the buffer size for connections
-    pub fn buffer_size(mut self, size: usize) -> Self {
-        self.buffer_size = Some(size);
-        self
-    }
-
-    /// Set the maximum number of connections
-    pub fn max_connections(mut self, max: usize) -> Self {
-        self.max_connections = Some(max);
-        self
-    }
-
-    /// Enable or disable TCP_NODELAY
-    pub fn no_delay(mut self, enabled: bool) -> Self {
-        self.no_delay = Some(enabled);
-        self
-    }
-
-    /// Set SO_KEEPALIVE duration
-    pub fn keep_alive(mut self, duration: Option<std::time::Duration>) -> Self {
-        self.keep_alive = Some(duration);
-        self
-    }
-
-    /// Set the logger implementation
-    pub fn logger(mut self, logger: Arc<dyn Logger>) -> Self {
-        self.logger = Some(logger);
-        self
-    }
-
-    /// Build the TcpServerConfig
-    pub fn build(self) -> TcpServerConfig {
-        let default = TcpServerConfig::default();
-        TcpServerConfig {
-            address: self.address.unwrap_or(default.address),
-            buffer_size: self.buffer_size.unwrap_or(default.buffer_size),
-            max_connections: self.max_connections.or(default.max_connections),
-            no_delay: self.no_delay.unwrap_or(default.no_delay),
-            keep_alive: self.keep_alive.unwrap_or(default.keep_alive),
-            logger: self.logger.unwrap_or(default.logger),
-        }
-    }
-}
-
-impl Default for TcpServerConfigBuilder {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc, Mutex,
+};
 
 /// High-level TCP server
 pub struct TcpServer<H: NetworkHandler> {
     listener: Arc<Mutex<TcpListener>>,
-    connections: Arc<RwLock<HashMap<ConnectionId, TcpConnection>>>,
+    connections: Arc<LockfreeMap<u64, TcpConnection>>,
     handler: Arc<H>,
     config: TcpServerConfig,
     buffer_pool: ObjectPool<Vec<u8>>,
-    next_conn_id: Arc<Mutex<u64>>,
+    next_conn_id: Arc<AtomicU64>,
     logger: Arc<dyn Logger>,
 }
 
@@ -152,10 +41,10 @@ impl<H: NetworkHandler> TcpServer<H> {
 
         Ok(Self {
             listener: Arc::new(Mutex::new(listener)),
-            connections: Arc::new(RwLock::new(HashMap::new())),
+            connections: Arc::new(LockfreeMap::new()),
             handler: Arc::new(handler),
             buffer_pool: ObjectPool::new(20, move || vec![0; config.buffer_size]),
-            next_conn_id: Arc::new(Mutex::new(1)),
+            next_conn_id: Arc::new(AtomicU64::new(1)),
             logger,
             config,
         })
@@ -186,30 +75,27 @@ impl<H: NetworkHandler> TcpServer<H> {
 
     /// Get active connection count
     pub fn connection_count(&self) -> usize {
-        self.connections.read().unwrap().len()
+        self.connections.iter().count()
     }
 
     /// Send data to a specific connection
     pub fn send_to(&self, conn_id: ConnectionId, data: &[u8]) -> Result<()> {
-        let mut connections = self.connections.write().unwrap();
-        if let Some(conn) = connections.get_mut(&conn_id) {
-            conn.stream.write_all(data)?;
+        if let Some(mut conn) = self.connections.get(&conn_id.as_u64()) {
+            conn.val().stream.lock().unwrap().write_all(data)?;
         }
         Ok(())
     }
 
     /// Close a specific connection
     pub fn close_connection(&self, conn_id: ConnectionId) -> Result<()> {
-        let mut connections = self.connections.write().unwrap();
-        connections.remove(&conn_id);
+        self.connections.remove(&conn_id.as_u64());
         Ok(())
     }
 
     /// Broadcast data to all connections
     pub fn broadcast(&self, data: &[u8]) -> Result<()> {
-        let mut connections = self.connections.write().unwrap();
-        for conn in connections.values_mut() {
-            let _ = conn.stream.write_all(data);
+        for conn in self.connections.iter() {
+            let _ = conn.val().stream.lock().unwrap().write_all(data);
         }
         Ok(())
     }
@@ -217,7 +103,7 @@ impl<H: NetworkHandler> TcpServer<H> {
 
 /// Internal TCP connection representation
 struct TcpConnection {
-    stream: TcpStream,
+    stream: Arc<Mutex<TcpStream>>,
     token: Token,
     #[allow(dead_code)]
     peer_addr: SocketAddr,
@@ -226,11 +112,11 @@ struct TcpConnection {
 /// Handler for accepting new connections
 struct TcpListenerHandler<H: NetworkHandler> {
     listener: Arc<Mutex<TcpListener>>,
-    connections: Arc<RwLock<HashMap<ConnectionId, TcpConnection>>>,
+    connections: Arc<LockfreeMap<u64, TcpConnection>>,
     handler: Arc<H>,
     config: TcpServerConfig,
     buffer_pool: ObjectPool<Vec<u8>>,
-    next_conn_id: Arc<Mutex<u64>>,
+    next_conn_id: Arc<AtomicU64>,
     event_loop_ref: *const EventLoop,
     logger: Arc<dyn Logger>,
 }
@@ -247,29 +133,32 @@ impl<H: NetworkHandler> EventHandler for TcpListenerHandler<H> {
 
         loop {
             match self.listener.lock().unwrap().accept() {
-                Ok((mut stream, peer_addr)) => {
+                Ok((stream, peer_addr)) => {
                     if let Some(max) = self.config.max_connections {
-                        if self.connections.read().unwrap().len() >= max {
-                            self.logger.log(LogLevel::Warn, &format!("Max connections reached, rejecting {}", peer_addr));
+                        if self.connections.iter().count() >= max {
+                            self.logger.log(
+                                LogLevel::Warn,
+                                &format!("Max connections reached, rejecting {}", peer_addr),
+                            );
                             continue;
                         }
                     }
 
                     if let Err(e) = stream.set_nodelay(self.config.no_delay) {
-                        self.logger.log(LogLevel::Error, &format!("Failed to set TCP_NODELAY: {}", e));
+                        self.logger.log(
+                            LogLevel::Error,
+                            &format!("Failed to set TCP_NODELAY: {}", e),
+                        );
                     }
 
-                    let conn_id = ConnectionId({
-                        let mut next = self.next_conn_id.lock().unwrap();
-                        let id = *next;
-                        *next += 1;
-                        id
-                    });
-
+                    let conn_id = ConnectionId(self.next_conn_id.fetch_add(1, Ordering::SeqCst));
                     let token = Token(conn_id.as_u64() as usize);
+
+                    let stream_arc = Arc::new(Mutex::new(stream));
 
                     let conn_handler = TcpConnectionHandler {
                         conn_id,
+                        stream: stream_arc.clone(),
                         connections: self.connections.clone(),
                         handler: self.handler.clone(),
                         buffer_pool: self.buffer_pool.clone(),
@@ -279,33 +168,41 @@ impl<H: NetworkHandler> EventHandler for TcpListenerHandler<H> {
 
                     let event_loop = unsafe { &*self.event_loop_ref };
                     if let Err(e) = event_loop.register(
-                        &mut stream,
+                        &mut *stream_arc.lock().unwrap(),
                         token,
                         Interest::READABLE | Interest::WRITABLE,
                         conn_handler,
                     ) {
-                        self.logger.log(LogLevel::Error, &format!("Failed to register connection: {}", e));
+                        self.logger.log(
+                            LogLevel::Error,
+                            &format!("Failed to register connection: {}", e),
+                        );
                         continue;
                     }
 
                     let conn = TcpConnection {
-                        stream,
+                        stream: stream_arc,
                         token,
                         peer_addr,
                     };
-                    self.connections.write().unwrap().insert(conn_id, conn);
+                    self.connections.insert(conn_id.as_u64(), conn);
 
                     if let Err(e) = self.handler.on_connect(conn_id) {
-                        self.logger.log(LogLevel::Error, &format!("Handler on_connect error: {}", e));
+                        self.logger
+                            .log(LogLevel::Error, &format!("Handler on_connect error: {}", e));
                     }
 
-                    self.logger.log(LogLevel::Info, &format!("New connection: {} (id: {:?})", peer_addr, conn_id));
+                    self.logger.log(
+                        LogLevel::Info,
+                        &format!("New connection: {} (id: {:?})", peer_addr, conn_id),
+                    );
                 }
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                     break;
                 }
                 Err(e) => {
-                    self.logger.log(LogLevel::Error, &format!("Accept error: {}", e));
+                    self.logger
+                        .log(LogLevel::Error, &format!("Accept error: {}", e));
                     break;
                 }
             }
@@ -316,7 +213,8 @@ impl<H: NetworkHandler> EventHandler for TcpListenerHandler<H> {
 /// Handler for individual TCP connections
 struct TcpConnectionHandler<H: NetworkHandler> {
     conn_id: ConnectionId,
-    connections: Arc<RwLock<HashMap<ConnectionId, TcpConnection>>>,
+    stream: Arc<Mutex<TcpStream>>,
+    connections: Arc<LockfreeMap<u64, TcpConnection>>,
     handler: Arc<H>,
     buffer_pool: ObjectPool<Vec<u8>>,
     event_loop_ref: *const EventLoop,
@@ -337,7 +235,10 @@ impl<H: NetworkHandler> EventHandler for TcpConnectionHandler<H> {
 
         if is_writable {
             if let Err(e) = self.handler.on_writable(self.conn_id) {
-                self.logger.log(LogLevel::Error, &format!("Handler on_writable error: {}", e));
+                self.logger.log(
+                    LogLevel::Error,
+                    &format!("Handler on_writable error: {}", e),
+                );
             }
         }
     }
@@ -348,12 +249,8 @@ impl<H: NetworkHandler> TcpConnectionHandler<H> {
         let mut buffer: PooledObject<Vec<u8>> = self.buffer_pool.acquire();
 
         let read_result = {
-            let mut connections = self.connections.write().unwrap();
-            if let Some(conn) = connections.get_mut(&self.conn_id) {
-                conn.stream.read(buffer.as_mut())
-            } else {
-                return;
-            }
+            let mut stream = self.stream.lock().unwrap();
+            stream.read(buffer.as_mut())
         };
 
         match read_result {
@@ -363,7 +260,8 @@ impl<H: NetworkHandler> TcpConnectionHandler<H> {
             }
             Ok(n) => {
                 if let Err(e) = self.handler.on_data(self.conn_id, &buffer.as_ref()[..n]) {
-                    self.logger.log(LogLevel::Error, &format!("Handler on_data error: {}", e));
+                    self.logger
+                        .log(LogLevel::Error, &format!("Handler on_data error: {}", e));
                     self.disconnect();
                 }
             }
@@ -378,13 +276,16 @@ impl<H: NetworkHandler> TcpConnectionHandler<H> {
     }
 
     fn disconnect(&self) {
-        let mut connections = self.connections.write().unwrap();
-        if let Some(mut conn) = connections.remove(&self.conn_id) {
+        if let Some(conn) = self.connections.remove(&self.conn_id.as_u64()) {
             let event_loop = unsafe { &*self.event_loop_ref };
-            let _ = event_loop.deregister(&mut conn.stream, conn.token);
+            let _ =
+                event_loop.deregister(&mut *conn.val().stream.lock().unwrap(), conn.val().token);
 
             if let Err(e) = self.handler.on_disconnect(self.conn_id) {
-                self.logger.log(LogLevel::Error, &format!("Handler on_disconnect error: {}", e));
+                self.logger.log(
+                    LogLevel::Error,
+                    &format!("Handler on_disconnect error: {}", e),
+                );
             }
         }
     }
@@ -404,7 +305,11 @@ impl<H: NetworkHandler> TcpClient<H> {
         Self::connect_with_logger(addr, handler, Arc::new(NoOpLogger))
     }
 
-    pub fn connect_with_logger(addr: SocketAddr, handler: H, logger: Arc<dyn Logger>) -> Result<Self> {
+    pub fn connect_with_logger(
+        addr: SocketAddr,
+        handler: H,
+        logger: Arc<dyn Logger>,
+    ) -> Result<Self> {
         let stream = TcpStream::connect(addr)?;
 
         Ok(Self {
@@ -467,7 +372,10 @@ impl<H: NetworkHandler> EventHandler for TcpClientHandler<H> {
         }
         if event.is_writable() {
             if let Err(e) = self.handler.on_writable(self.conn_id) {
-                self.logger.log(LogLevel::Error, &format!("Handler on_writable error: {}", e));
+                self.logger.log(
+                    LogLevel::Error,
+                    &format!("Handler on_writable error: {}", e),
+                );
             }
         }
     }
@@ -494,7 +402,8 @@ impl<H: NetworkHandler> TcpClientHandler<H> {
             }
             Ok(n) => {
                 if let Err(e) = self.handler.on_data(self.conn_id, &buffer.as_ref()[..n]) {
-                    self.logger.log(LogLevel::Error, &format!("Handler on_data error: {}", e));
+                    self.logger
+                        .log(LogLevel::Error, &format!("Handler on_data error: {}", e));
                     self.disconnect();
                 }
             }
@@ -502,7 +411,8 @@ impl<H: NetworkHandler> TcpClientHandler<H> {
                 // expected for non-blocking I/O
             }
             Err(e) => {
-                self.logger.log(LogLevel::Error, &format!("Read error: {}", e));
+                self.logger
+                    .log(LogLevel::Error, &format!("Read error: {}", e));
                 self.handler.on_error(self.conn_id, e);
                 self.disconnect();
             }
@@ -512,9 +422,12 @@ impl<H: NetworkHandler> TcpClientHandler<H> {
     fn disconnect(&self) {
         let mut stream_guard = self.stream.lock().unwrap();
         *stream_guard = None;
-        
+
         if let Err(e) = self.handler.on_disconnect(self.conn_id) {
-            self.logger.log(LogLevel::Error, &format!("Handler on_disconnect error: {}", e));
+            self.logger.log(
+                LogLevel::Error,
+                &format!("Handler on_disconnect error: {}", e),
+            );
         }
     }
 }
