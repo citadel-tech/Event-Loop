@@ -1,7 +1,7 @@
 //! TCP server and client implementations with lockfree connection management.
 //!
 //! This module provides high-performance TCP networking built on Mill-IO's event loop.
-//! 
+//!
 //! Each TCP connection is assigned a unique ConnectionId generated atomically.
 //! The connection state is stored in a lockfree map, allowing concurrent access
 //! from multiple worker threads without blocking.
@@ -165,7 +165,7 @@ impl<H: NetworkHandler> TcpServer<H> {
 
     /// Send data to a specific connection
     pub fn send_to(&self, conn_id: ConnectionId, data: &[u8]) -> Result<()> {
-        if let Some(mut conn) = self.connections.get(&conn_id.as_u64()) {
+        if let Some(conn) = self.connections.get(&conn_id.as_u64()) {
             conn.val().stream.lock().unwrap().write_all(data)?;
         }
         Ok(())
