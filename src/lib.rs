@@ -104,6 +104,7 @@ pub mod thread_pool;
 pub use handler::EventHandler;
 pub use mio::event::Event;
 pub use object_pool::{ObjectPool, PooledObject};
+pub mod net;
 
 use crate::{
     error::Result,
