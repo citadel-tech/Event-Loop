@@ -389,3 +389,132 @@ impl<H: NetworkHandler> TcpConnectionHandler<H> {
         }
     }
 }
+
+/// High-level TCP client
+pub struct TcpClient<H: NetworkHandler> {
+    stream: Arc<Mutex<Option<TcpStream>>>,
+    handler: Arc<H>,
+    buffer_pool: ObjectPool<Vec<u8>>,
+    conn_id: ConnectionId,
+    logger: Arc<dyn Logger>,
+}
+
+impl<H: NetworkHandler> TcpClient<H> {
+    pub fn connect(addr: SocketAddr, handler: H) -> Result<Self> {
+        Self::connect_with_logger(addr, handler, Arc::new(NoOpLogger))
+    }
+
+    pub fn connect_with_logger(addr: SocketAddr, handler: H, logger: Arc<dyn Logger>) -> Result<Self> {
+        let stream = TcpStream::connect(addr)?;
+
+        Ok(Self {
+            stream: Arc::new(Mutex::new(Some(stream))),
+            handler: Arc::new(handler),
+            buffer_pool: ObjectPool::new(5, || vec![0; 8192]),
+            conn_id: ConnectionId::new(1),
+            logger,
+        })
+    }
+
+    pub fn start(&mut self, event_loop: &EventLoop, token: Token) -> Result<()> {
+        let handler = TcpClientHandler {
+            conn_id: self.conn_id,
+            stream: self.stream.clone(),
+            handler: self.handler.clone(),
+            buffer_pool: self.buffer_pool.clone(),
+            logger: self.logger.clone(),
+        };
+
+        event_loop.register(
+            self.stream.lock().unwrap().as_mut().unwrap(),
+            token,
+            Interest::READABLE | Interest::WRITABLE,
+            handler,
+        )?;
+
+        self.handler.on_connect(self.conn_id)?;
+
+        Ok(())
+    }
+
+    pub fn send(&mut self, data: &[u8]) -> Result<()> {
+        if let Some(stream) = self.stream.lock().unwrap().as_mut() {
+            stream.write_all(data)?;
+        }
+        Ok(())
+    }
+
+    pub fn disconnect(&mut self) -> Result<()> {
+        let mut stream_guard = self.stream.lock().unwrap();
+        *stream_guard = None;
+        self.handler.on_disconnect(self.conn_id)?;
+        Ok(())
+    }
+}
+
+struct TcpClientHandler<H: NetworkHandler> {
+    conn_id: ConnectionId,
+    stream: Arc<Mutex<Option<TcpStream>>>,
+    handler: Arc<H>,
+    buffer_pool: ObjectPool<Vec<u8>>,
+    logger: Arc<dyn Logger>,
+}
+
+impl<H: NetworkHandler> EventHandler for TcpClientHandler<H> {
+    fn handle_event(&self, event: &Event) {
+        if event.is_readable() {
+            self.handle_read();
+        }
+        if event.is_writable() {
+            if let Err(e) = self.handler.on_writable(self.conn_id) {
+                self.logger.log(LogLevel::Error, &format!("Handler on_writable error: {}", e));
+            }
+        }
+    }
+}
+
+impl<H: NetworkHandler> TcpClientHandler<H> {
+    fn handle_read(&self) {
+        let mut buffer: PooledObject<Vec<u8>> = self.buffer_pool.acquire();
+
+        let read_result = {
+            let mut stream_guard = self.stream.lock().unwrap();
+            if let Some(stream) = stream_guard.as_mut() {
+                stream.read(buffer.as_mut())
+            } else {
+                return;
+            }
+        };
+
+        match read_result {
+            Ok(0) => {
+                // connection closed by server
+                self.logger.log(LogLevel::Info, "Server closed connection");
+                self.disconnect();
+            }
+            Ok(n) => {
+                if let Err(e) = self.handler.on_data(self.conn_id, &buffer.as_ref()[..n]) {
+                    self.logger.log(LogLevel::Error, &format!("Handler on_data error: {}", e));
+                    self.disconnect();
+                }
+            }
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                // expected for non-blocking I/O
+            }
+            Err(e) => {
+                self.logger.log(LogLevel::Error, &format!("Read error: {}", e));
+                self.handler.on_error(self.conn_id, e);
+                self.disconnect();
+            }
+        }
+    }
+
+    fn disconnect(&self) {
+        let mut stream_guard = self.stream.lock().unwrap();
+        *stream_guard = None;
+        
+        if let Err(e) = self.handler.on_disconnect(self.conn_id) {
+            self.logger.log(LogLevel::Error, &format!("Handler on_disconnect error: {}", e));
+        }
+    }
+}
