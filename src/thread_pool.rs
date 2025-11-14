@@ -27,7 +27,10 @@ type ChannelReceiver = channel::Receiver<WorkerMessage>;
 
 impl Default for ThreadPool {
     fn default() -> Self {
-        Self::new(DEFAULT_POOL_CAPACITY)
+        let default_capacity = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(DEFAULT_POOL_CAPACITY);
+        Self::new(default_capacity)
     }
 }
 
@@ -135,7 +138,6 @@ mod tests {
         std::thread::sleep(Duration::from_millis(100));
         assert_eq!(counter.load(Ordering::SeqCst), 1);
     }
-
     #[test]
     fn test_multiple_tasks() {
         let pool = ThreadPool::new(4);
