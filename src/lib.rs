@@ -101,16 +101,12 @@ pub mod object_pool;
 pub mod poll;
 pub mod reactor;
 pub mod thread_pool;
-pub mod utils;
+
 pub use handler::EventHandler;
 pub use mio::event::Event;
 pub use object_pool::{ObjectPool, PooledObject};
 
-use crate::{
-    error::Result,
-    reactor::{DEFAULT_EVENTS_CAPACITY, DEFAULT_POLL_TIMEOUT_MS},
-    utils::get_default_capacity,
-};
+use crate::error::Result;
 
 /// A convenient prelude module that re-exports commonly used types and traits.
 ///
@@ -187,21 +183,15 @@ impl Default for EventLoop {
     /// Creates a new `EventLoop` with default configuration.
     ///
     /// The default configuration uses:
-    /// - Available CPU cores present locally or 4 worker threads ([`DEFAULT_POOL_CAPACITY`])
-    /// - 1024 events capacity ([`DEFAULT_EVENTS_CAPACITY`])
-    /// - 100ms poll timeout ([`DEFAULT_POLL_TIMEOUT_MS`])
+    /// - Available CPU cores present locally or 4 worker threads ([`thread_pool::DEFAULT_POOL_CAPACITY`])
+    /// - 1024 events capacity ([`reactor::DEFAULT_EVENTS_CAPACITY`])
+    /// - 100ms poll timeout ([`reactor::DEFAULT_POLL_TIMEOUT_MS`])
     ///
     /// # Panics
     ///
     /// Panics if the reactor cannot be initialized with default settings.
     fn default() -> Self {
-        let default_capacity = get_default_capacity();
-        let reactor = reactor::Reactor::new(
-            default_capacity,
-            DEFAULT_EVENTS_CAPACITY,
-            DEFAULT_POLL_TIMEOUT_MS,
-        )
-        .unwrap();
+        let reactor = reactor::Reactor::default();
         Self { reactor }
     }
 }

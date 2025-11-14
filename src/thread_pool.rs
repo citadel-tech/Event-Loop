@@ -7,7 +7,7 @@ use std::{
     thread::{Builder, JoinHandle},
 };
 
-use crate::{error::Result, utils::get_default_capacity};
+use crate::error::Result;
 
 pub const DEFAULT_POOL_CAPACITY: usize = 4;
 
@@ -27,7 +27,9 @@ type ChannelReceiver = channel::Receiver<WorkerMessage>;
 
 impl Default for ThreadPool {
     fn default() -> Self {
-        let default_capacity = get_default_capacity();
+        let default_capacity = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(DEFAULT_POOL_CAPACITY);
         Self::new(default_capacity)
     }
 }
