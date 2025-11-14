@@ -183,9 +183,9 @@ impl Default for EventLoop {
     /// Creates a new `EventLoop` with default configuration.
     ///
     /// The default configuration uses:
-    /// - Available CPU cores present locally or 4 worker threads ([`thread_pool::DEFAULT_POOL_CAPACITY`])
+    /// - Number of worker threads equal to available CPU cores, falling back to 4 threads if CPU detection fails ([`thread_pool::DEFAULT_POOL_CAPACITY`])
     /// - 1024 events capacity ([`reactor::DEFAULT_EVENTS_CAPACITY`])
-    /// - 100ms poll timeout ([`reactor::DEFAULT_POLL_TIMEOUT_MS`])
+    /// - 150ms poll timeout ([`reactor::DEFAULT_POLL_TIMEOUT_MS`])
     ///
     /// # Panics
     ///
