@@ -97,14 +97,15 @@
 use mio::{Interest, Token};
 pub mod error;
 pub mod handler;
+pub mod net;
 pub mod object_pool;
 pub mod poll;
 pub mod reactor;
 pub mod thread_pool;
+
 pub use handler::EventHandler;
 pub use mio::event::Event;
 pub use object_pool::{ObjectPool, PooledObject};
-pub mod net;
 
 use crate::{
     error::Result,
