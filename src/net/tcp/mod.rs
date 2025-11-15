@@ -237,6 +237,7 @@ impl<H: NetworkHandler> EventHandler for TcpListenerHandler<H> {
                                 LogLevel::Warn,
                                 &format!("Max connections reached, rejecting {}", peer_addr),
                             );
+                            // The stream is dropped here, closing the connection.
                             continue;
                         }
                     }
@@ -270,8 +271,11 @@ impl<H: NetworkHandler> EventHandler for TcpListenerHandler<H> {
                             LogLevel::Error,
                             "EventLoop is gone, cannot register new connection",
                         );
+                        // The stream is dropped here, closing the connection.
                         continue;
                     };
+
+                    // If registration fails, the stream is dropped and the connection is closed.
                     if let Err(e) = event_loop.register(
                         &mut *stream_arc.lock().unwrap(),
                         token,
@@ -292,9 +296,19 @@ impl<H: NetworkHandler> EventHandler for TcpListenerHandler<H> {
                     };
                     self.connections.insert(conn_id.as_u64(), conn);
 
+                    // If the user's on_connect handler fails, we must clean up the connection.
                     if let Err(e) = self.handler.on_connect(conn_id) {
                         self.logger
                             .log(LogLevel::Error, &format!("Handler on_connect error: {}", e));
+
+                        // Remove the connection from the map and deregister from the event loop.
+                        if let Some(conn) = self.connections.remove(&conn_id.as_u64()) {
+                            let _ = event_loop.deregister(
+                                &mut *conn.val().stream.lock().unwrap(),
+                                conn.val().token,
+                            );
+                        }
+                        continue;
                     }
 
                     self.logger.log(
