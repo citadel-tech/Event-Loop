@@ -105,7 +105,7 @@ use std::io::{Read, Write};
 use std::net::SocketAddr;
 use std::sync::{
     atomic::{AtomicU64, Ordering},
-    Arc, Mutex,
+    Arc, Mutex, Weak,
 };
 
 /// High-level TCP server
@@ -136,7 +136,7 @@ impl<H: NetworkHandler> TcpServer<H> {
     }
 
     /// Start the server by registering with the event loop
-    pub fn start(&self, event_loop: &EventLoop, listener_token: Token) -> Result<()> {
+    pub fn start(&self, event_loop: &Arc<EventLoop>, listener_token: Token) -> Result<()> {
         let listener_handler = TcpListenerHandler {
             listener: self.listener.clone(),
             connections: self.connections.clone(),
@@ -144,7 +144,7 @@ impl<H: NetworkHandler> TcpServer<H> {
             config: self.config.clone(),
             buffer_pool: self.buffer_pool.clone(),
             next_conn_id: self.next_conn_id.clone(),
-            event_loop_ref: event_loop as *const EventLoop,
+            event_loop: Arc::downgrade(event_loop),
             logger: self.logger.clone(),
         };
 
@@ -202,7 +202,7 @@ struct TcpListenerHandler<H: NetworkHandler> {
     config: TcpServerConfig,
     buffer_pool: ObjectPool<Vec<u8>>,
     next_conn_id: Arc<AtomicU64>,
-    event_loop_ref: *const EventLoop,
+    event_loop: Weak<EventLoop>,
     logger: Arc<dyn Logger>,
 }
 
@@ -247,11 +247,19 @@ impl<H: NetworkHandler> EventHandler for TcpListenerHandler<H> {
                         connections: self.connections.clone(),
                         handler: self.handler.clone(),
                         buffer_pool: self.buffer_pool.clone(),
-                        event_loop_ref: self.event_loop_ref,
+                        event_loop: self.event_loop.clone(),
                         logger: self.logger.clone(),
                     };
 
-                    let event_loop = unsafe { &*self.event_loop_ref };
+                    let event_loop = if let Some(arc) = self.event_loop.upgrade() {
+                        arc
+                    } else {
+                        self.logger.log(
+                            LogLevel::Error,
+                            "EventLoop is gone, cannot register new connection",
+                        );
+                        continue;
+                    };
                     if let Err(e) = event_loop.register(
                         &mut *stream_arc.lock().unwrap(),
                         token,
@@ -302,7 +310,7 @@ struct TcpConnectionHandler<H: NetworkHandler> {
     connections: Arc<LockfreeMap<u64, TcpConnection>>,
     handler: Arc<H>,
     buffer_pool: ObjectPool<Vec<u8>>,
-    event_loop_ref: *const EventLoop,
+    event_loop: Weak<EventLoop>,
     logger: Arc<dyn Logger>,
 }
 
@@ -362,9 +370,10 @@ impl<H: NetworkHandler> TcpConnectionHandler<H> {
 
     fn disconnect(&self) {
         if let Some(conn) = self.connections.remove(&self.conn_id.as_u64()) {
-            let event_loop = unsafe { &*self.event_loop_ref };
-            let _ =
-                event_loop.deregister(&mut *conn.val().stream.lock().unwrap(), conn.val().token);
+            if let Some(event_loop) = self.event_loop.upgrade() {
+                let _ = event_loop
+                    .deregister(&mut *conn.val().stream.lock().unwrap(), conn.val().token);
+            }
 
             if let Err(e) = self.handler.on_disconnect(self.conn_id) {
                 self.logger.log(
@@ -406,13 +415,14 @@ impl<H: NetworkHandler> TcpClient<H> {
         })
     }
 
-    pub fn start(&mut self, event_loop: &EventLoop, token: Token) -> Result<()> {
+    pub fn start(&mut self, event_loop: &Arc<EventLoop>, token: Token) -> Result<()> {
         let handler = TcpClientHandler {
             conn_id: self.conn_id,
             stream: self.stream.clone(),
             handler: self.handler.clone(),
             buffer_pool: self.buffer_pool.clone(),
             logger: self.logger.clone(),
+            event_loop: Arc::downgrade(event_loop),
         };
 
         event_loop.register(
@@ -448,6 +458,7 @@ struct TcpClientHandler<H: NetworkHandler> {
     handler: Arc<H>,
     buffer_pool: ObjectPool<Vec<u8>>,
     logger: Arc<dyn Logger>,
+    event_loop: Weak<EventLoop>,
 }
 
 impl<H: NetworkHandler> EventHandler for TcpClientHandler<H> {
@@ -506,6 +517,14 @@ impl<H: NetworkHandler> TcpClientHandler<H> {
 
     fn disconnect(&self) {
         let mut stream_guard = self.stream.lock().unwrap();
+        if let Some(stream) = stream_guard.take() {
+            if let Some(event_loop) = self.event_loop.upgrade() {
+                // We need to construct a temporary stream to deregister.
+                // This is a bit of a hack due to mio's API.
+                let mut temp_stream = stream;
+                let _ = event_loop.deregister(&mut temp_stream, Token(self.conn_id.as_u64() as usize));
+            }
+        }
         *stream_guard = None;
 
         if let Err(e) = self.handler.on_disconnect(self.conn_id) {
