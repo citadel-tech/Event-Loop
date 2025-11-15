@@ -96,7 +96,7 @@ pub struct ShutdownHandle<'a> {
     poll_handle: &'a PollHandle,
 }
 
-impl<'a> ShutdownHandle<'a> {
+impl ShutdownHandle<'_> {
     pub fn shutdown(&self) {
         self.running.store(false, Ordering::SeqCst);
         self.poll_handle.wake().unwrap();

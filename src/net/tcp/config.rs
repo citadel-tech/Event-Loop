@@ -127,3 +127,17 @@ impl TcpServerConfigBuilder {
         }
     }
 }
+
+impl Default for TcpServerConfigBuilder {
+    fn default() -> Self {
+        let default = TcpServerConfig::default();
+        Self {
+            address: Some(default.address),
+            buffer_size: Some(default.buffer_size),
+            max_connections: default.max_connections,
+            no_delay: Some(default.no_delay),
+            keep_alive: Some(default.keep_alive),
+            logger: Some(default.logger),
+        }
+    }
+}
