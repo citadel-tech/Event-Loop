@@ -127,9 +127,3 @@ impl TcpServerConfigBuilder {
         }
     }
 }
-
-impl Default for TcpServerConfigBuilder {
-    fn default() -> Self {
-        Self::new()
-    }
-}
