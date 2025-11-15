@@ -148,8 +148,15 @@ impl<H: NetworkHandler> TcpServer<H> {
             logger: self.logger.clone(),
         };
 
+        let mut listener = self.listener.lock().map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::Other,
+                format!("Listener mutex poisoned: {}", e),
+            )
+        })?;
+
         event_loop.register(
-            &mut *self.listener.lock().unwrap(),
+            &mut *listener,
             listener_token,
             Interest::READABLE,
             listener_handler,
@@ -166,7 +173,13 @@ impl<H: NetworkHandler> TcpServer<H> {
     /// Send data to a specific connection
     pub fn send_to(&self, conn_id: ConnectionId, data: &[u8]) -> Result<()> {
         if let Some(conn) = self.connections.get(&conn_id.as_u64()) {
-            conn.val().stream.lock().unwrap().write_all(data)?;
+            let mut stream = conn.val().stream.lock().map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::Other,
+                    format!("Stream mutex poisoned: {}", e),
+                )
+            })?;
+            stream.write_all(data)?;
         }
         Ok(())
     }
@@ -174,7 +187,16 @@ impl<H: NetworkHandler> TcpServer<H> {
     /// Close a specific connection
     pub fn close_connection(&self, event_loop: &EventLoop, conn_id: ConnectionId) -> Result<()> {
         if let Some(conn) = self.connections.remove(&conn_id.as_u64()) {
-            let mut stream = conn.val().stream.lock().unwrap();
+            let mut stream = match conn.val().stream.lock() {
+                Ok(s) => s,
+                Err(e) => {
+                    self.logger.log(
+                        LogLevel::Error,
+                        &format!("Stream mutex poisoned on close for {:?}: {}", conn_id, e),
+                    );
+                    e.into_inner()
+                }
+            };
 
             let _ = event_loop.deregister(&mut *stream, conn.val().token);
             let _ = stream.shutdown(std::net::Shutdown::Both);
@@ -192,7 +214,9 @@ impl<H: NetworkHandler> TcpServer<H> {
     /// Broadcast data to all connections
     pub fn broadcast(&self, data: &[u8]) -> Result<()> {
         for conn in self.connections.iter() {
-            let _ = conn.val().stream.lock().unwrap().write_all(data);
+            if let Ok(mut stream) = conn.val().stream.lock() {
+                let _ = stream.write_all(data);
+            }
         }
         Ok(())
     }
@@ -229,7 +253,18 @@ impl<H: NetworkHandler> EventHandler for TcpListenerHandler<H> {
         }
 
         loop {
-            match self.listener.lock().unwrap().accept() {
+            let listener = match self.listener.lock() {
+                Ok(l) => l,
+                Err(e) => {
+                    self.logger.log(
+                        LogLevel::Error,
+                        &format!("Listener mutex poisoned: {}. Aborting accept loop.", e),
+                    );
+                    return;
+                }
+            };
+
+            match listener.accept() {
                 Ok((stream, peer_addr)) => {
                     if let Some(max) = self.config.max_connections {
                         if self.connections.iter().count() >= max {
@@ -275,9 +310,21 @@ impl<H: NetworkHandler> EventHandler for TcpListenerHandler<H> {
                         continue;
                     };
 
+                    // let stream_clone = Arc::clone(&stream_arc);
+                    let mut stream_guard = match stream_arc.lock() {
+                        Ok(s) => s,
+                        Err(e) => {
+                            self.logger.log(
+                                LogLevel::Error,
+                                &format!("Stream mutex poisoned during registration: {}", e),
+                            );
+                            continue;
+                        }
+                    };
+
                     // If registration fails, the stream is dropped and the connection is closed.
                     if let Err(e) = event_loop.register(
-                        &mut *stream_arc.lock().unwrap(),
+                        &mut *stream_guard,
                         token,
                         Interest::READABLE | Interest::WRITABLE,
                         conn_handler,
@@ -290,7 +337,7 @@ impl<H: NetworkHandler> EventHandler for TcpListenerHandler<H> {
                     }
 
                     let conn = TcpConnection {
-                        stream: stream_arc,
+                        stream: stream_arc.clone(),
                         token,
                         peer_addr,
                     };
@@ -303,10 +350,9 @@ impl<H: NetworkHandler> EventHandler for TcpListenerHandler<H> {
 
                         // Remove the connection from the map and deregister from the event loop.
                         if let Some(conn) = self.connections.remove(&conn_id.as_u64()) {
-                            let _ = event_loop.deregister(
-                                &mut *conn.val().stream.lock().unwrap(),
-                                conn.val().token,
-                            );
+                            if let Ok(mut stream) = conn.val().stream.lock() {
+                                let _ = event_loop.deregister(&mut *stream, conn.val().token);
+                            }
                         }
                         continue;
                     }
@@ -368,7 +414,20 @@ impl<H: NetworkHandler> TcpConnectionHandler<H> {
         let mut buffer: PooledObject<Vec<u8>> = self.buffer_pool.acquire();
 
         let read_result = {
-            let mut stream = self.stream.lock().unwrap();
+            let mut stream = match self.stream.lock() {
+                Ok(s) => s,
+                Err(e) => {
+                    self.logger.log(
+                        LogLevel::Error,
+                        &format!(
+                            "Stream mutex poisoned on read for {:?}: {}",
+                            self.conn_id, e
+                        ),
+                    );
+                    self.disconnect();
+                    return;
+                }
+            };
             stream.read(buffer.as_mut())
         };
 
@@ -397,8 +456,9 @@ impl<H: NetworkHandler> TcpConnectionHandler<H> {
     fn disconnect(&self) {
         if let Some(conn) = self.connections.remove(&self.conn_id.as_u64()) {
             if let Some(event_loop) = self.event_loop.upgrade() {
-                let _ = event_loop
-                    .deregister(&mut *conn.val().stream.lock().unwrap(), conn.val().token);
+                if let Ok(mut stream) = conn.val().stream.lock() {
+                    let _ = event_loop.deregister(&mut *stream, conn.val().token);
+                }
             }
 
             if let Err(e) = self.handler.on_disconnect(self.conn_id) {
@@ -451,8 +511,15 @@ impl<H: NetworkHandler> TcpClient<H> {
             event_loop: Arc::downgrade(event_loop),
         };
 
+        let mut stream_guard = self.stream.lock().map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::Other,
+                format!("Client stream mutex poisoned: {}", e),
+            )
+        })?;
+
         event_loop.register(
-            self.stream.lock().unwrap().as_mut().unwrap(),
+            stream_guard.as_mut().unwrap(),
             token,
             Interest::READABLE | Interest::WRITABLE,
             handler,
@@ -464,15 +531,18 @@ impl<H: NetworkHandler> TcpClient<H> {
     }
 
     pub fn send(&mut self, data: &[u8]) -> Result<()> {
-        if let Some(stream) = self.stream.lock().unwrap().as_mut() {
-            stream.write_all(data)?;
+        if let Ok(mut stream_guard) = self.stream.lock() {
+            if let Some(stream) = stream_guard.as_mut() {
+                stream.write_all(data)?;
+            }
         }
         Ok(())
     }
 
     pub fn disconnect(&mut self) -> Result<()> {
-        let mut stream_guard = self.stream.lock().unwrap();
-        *stream_guard = None;
+        if let Ok(mut stream_guard) = self.stream.lock() {
+            *stream_guard = None;
+        }
         self.handler.on_disconnect(self.conn_id)?;
         Ok(())
     }
@@ -508,7 +578,17 @@ impl<H: NetworkHandler> TcpClientHandler<H> {
         let mut buffer: PooledObject<Vec<u8>> = self.buffer_pool.acquire();
 
         let read_result = {
-            let mut stream_guard = self.stream.lock().unwrap();
+            let mut stream_guard = match self.stream.lock() {
+                Ok(s) => s,
+                Err(e) => {
+                    self.logger.log(
+                        LogLevel::Error,
+                        &format!("Client stream mutex poisoned on read: {}", e),
+                    );
+                    self.disconnect();
+                    return;
+                }
+            };
             if let Some(stream) = stream_guard.as_mut() {
                 stream.read(buffer.as_mut())
             } else {
@@ -542,7 +622,16 @@ impl<H: NetworkHandler> TcpClientHandler<H> {
     }
 
     fn disconnect(&self) {
-        let mut stream_guard = self.stream.lock().unwrap();
+        let mut stream_guard = match self.stream.lock() {
+            Ok(s) => s,
+            Err(e) => {
+                self.logger.log(
+                    LogLevel::Error,
+                    &format!("Client stream mutex poisoned on disconnect: {}", e),
+                );
+                e.into_inner()
+            }
+        };
         if let Some(stream) = stream_guard.as_mut() {
             if let Some(event_loop) = self.event_loop.upgrade() {
                 let _ = event_loop.deregister(stream, Token(self.conn_id.as_u64() as usize));
