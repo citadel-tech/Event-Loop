@@ -39,7 +39,7 @@
 //!
 //! ```rust,no_run
 //! use mill_io::net::tcp::{TcpServer, TcpServerConfig};
-//! use mill_io::net::tcp::traits::{NetworkHandler, ConnectionId, Logger, LogLevel};
+//! use mill_io::net::tcp::{traits::{NetworkHandler, ConnectionId, Logger, LogLevel}, ServerContext};
 //! use mill_io::{EventLoop, error::Result};
 //! use std::sync::Arc;
 //!
@@ -52,7 +52,7 @@
 //! }
 //!
 //! impl NetworkHandler for EchoHandler {
-//!     fn on_data(&self, _conn_id: ConnectionId, data: &[u8]) -> Result<()> {
+//!     fn on_data(&self, _ctx: &ServerContext, _conn_id: ConnectionId, data: &[u8]) -> Result<()> {
 //!         // Echo back the data
 //!         println!("Received: {:?}", data);
 //!         Ok(())
@@ -65,7 +65,7 @@
 //!     .buffer_size(8192)
 //!     .build();
 //!
-//! let server = TcpServer::new(config, EchoHandler)?;
+//! let server = Arc::new(TcpServer::new(config, EchoHandler)?);
 //! let event_loop = Arc::new(EventLoop::default());
 //!
 //! server.start(&event_loop, mio::Token(0))?;

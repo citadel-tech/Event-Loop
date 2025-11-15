@@ -65,7 +65,7 @@
 //! to a specific logging framework.
 //!
 //! ```rust
-//! use mill_io::net::tcp::traits::{NetworkHandler, ConnectionId, Logger, LogLevel, ServerContext};
+//! use mill_io::net::tcp::{traits::{NetworkHandler, ConnectionId, Logger, LogLevel}, ServerContext};
 //! use mill_io::error::Result;
 //!
 //! struct MyHandler;
