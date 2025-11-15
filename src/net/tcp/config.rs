@@ -20,7 +20,7 @@ use crate::net::tcp::traits::{Logger, NoOpLogger};
 pub struct TcpServerConfig {
     /// Address to bind to
     pub address: SocketAddr,
-    /// Number of connection buffer size
+    /// Size of connection buffer
     pub buffer_size: usize,
     /// Maximum number of connections
     pub max_connections: Option<usize>,
