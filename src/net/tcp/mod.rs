@@ -190,13 +190,16 @@ impl<H: NetworkHandler> TcpServer<H> {
     }
 
     /// Start the server by registering with the event loop
-    pub fn start(self: Arc<Self>, event_loop: &Arc<EventLoop>, listener_token: Token) -> Result<()> {
+    pub fn start(
+        self: Arc<Self>,
+        event_loop: &Arc<EventLoop>,
+        listener_token: Token,
+    ) -> Result<()> {
         // `self` is an Arc<TcpServer<H>>, so we can create a weak pointer to it.
         let server_weak = Arc::downgrade(&self) as Weak<dyn ServerOperations>;
 
         // Update the context with weak references.
-        let context_mut =
-            unsafe { &mut *(Arc::as_ptr(&self.context) as *mut ServerContext) };
+        let context_mut = unsafe { &mut *(Arc::as_ptr(&self.context) as *mut ServerContext) };
         context_mut.server = server_weak;
         context_mut.event_loop = Arc::downgrade(event_loop);
 
@@ -516,9 +519,9 @@ impl<H: NetworkHandler> TcpConnectionHandler<H> {
                 self.disconnect();
             }
             Ok(n) => {
-                if let Err(e) = self
-                    .handler
-                    .on_data(&self.context, self.conn_id, &buffer.as_ref()[..n])
+                if let Err(e) =
+                    self.handler
+                        .on_data(&self.context, self.conn_id, &buffer.as_ref()[..n])
                 {
                     self.logger
                         .log(LogLevel::Error, &format!("Handler on_data error: {}", e));
@@ -590,8 +593,7 @@ impl<H: NetworkHandler> TcpClient<H> {
     }
 
     pub fn start(&mut self, event_loop: &Arc<EventLoop>, token: Token) -> Result<()> {
-        let context_mut =
-            unsafe { &mut *(Arc::as_ptr(&self.context) as *mut ServerContext) };
+        let context_mut = unsafe { &mut *(Arc::as_ptr(&self.context) as *mut ServerContext) };
         context_mut.event_loop = Arc::downgrade(event_loop);
 
         let handler = TcpClientHandler {
@@ -724,9 +726,9 @@ impl<H: NetworkHandler> TcpClientHandler<H> {
                 self.disconnect();
             }
             Ok(n) => {
-                if let Err(e) = self
-                    .handler
-                    .on_data(&self.context, self.conn_id, &buffer.as_ref()[..n])
+                if let Err(e) =
+                    self.handler
+                        .on_data(&self.context, self.conn_id, &buffer.as_ref()[..n])
                 {
                     self.logger
                         .log(LogLevel::Error, &format!("Handler on_data error: {}", e));
