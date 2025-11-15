@@ -172,8 +172,20 @@ impl<H: NetworkHandler> TcpServer<H> {
     }
 
     /// Close a specific connection
-    pub fn close_connection(&self, conn_id: ConnectionId) -> Result<()> {
-        self.connections.remove(&conn_id.as_u64());
+    pub fn close_connection(&self, event_loop: &EventLoop, conn_id: ConnectionId) -> Result<()> {
+        if let Some(conn) = self.connections.remove(&conn_id.as_u64()) {
+            let mut stream = conn.val().stream.lock().unwrap();
+
+            let _ = event_loop.deregister(&mut *stream, conn.val().token);
+            let _ = stream.shutdown(std::net::Shutdown::Both);
+
+            if let Err(e) = self.handler.on_disconnect(conn_id) {
+                self.logger.log(
+                    LogLevel::Error,
+                    &format!("Handler on_disconnect error: {}", e),
+                );
+            }
+        }
         Ok(())
     }
 
