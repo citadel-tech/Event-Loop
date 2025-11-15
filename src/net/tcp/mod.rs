@@ -104,7 +104,7 @@ use std::io;
 use std::io::{Read, Write};
 use std::net::SocketAddr;
 use std::sync::{
-    atomic::{AtomicU64, Ordering},
+    atomic::{AtomicU64, AtomicUsize, Ordering},
     Arc, Mutex, Weak,
 };
 
@@ -116,6 +116,7 @@ pub struct TcpServer<H: NetworkHandler> {
     config: TcpServerConfig,
     buffer_pool: ObjectPool<Vec<u8>>,
     next_conn_id: Arc<AtomicU64>,
+    connection_counter: Arc<AtomicUsize>,
     logger: Arc<dyn Logger>,
 }
 
@@ -130,6 +131,7 @@ impl<H: NetworkHandler> TcpServer<H> {
             handler: Arc::new(handler),
             buffer_pool: ObjectPool::new(20, move || vec![0; config.buffer_size]),
             next_conn_id: Arc::new(AtomicU64::new(1)),
+            connection_counter: Arc::new(AtomicUsize::new(0)),
             logger,
             config,
         })
@@ -145,6 +147,7 @@ impl<H: NetworkHandler> TcpServer<H> {
             buffer_pool: self.buffer_pool.clone(),
             next_conn_id: self.next_conn_id.clone(),
             event_loop: Arc::downgrade(event_loop),
+            connection_counter: self.connection_counter.clone(),
             logger: self.logger.clone(),
         };
 
@@ -167,7 +170,7 @@ impl<H: NetworkHandler> TcpServer<H> {
 
     /// Get active connection count
     pub fn connection_count(&self) -> usize {
-        self.connections.iter().count()
+        self.connection_counter.load(Ordering::SeqCst)
     }
 
     /// Send data to a specific connection
@@ -239,6 +242,7 @@ struct TcpListenerHandler<H: NetworkHandler> {
     buffer_pool: ObjectPool<Vec<u8>>,
     next_conn_id: Arc<AtomicU64>,
     event_loop: Weak<EventLoop>,
+    connection_counter: Arc<AtomicUsize>,
     logger: Arc<dyn Logger>,
 }
 
@@ -266,15 +270,18 @@ impl<H: NetworkHandler> EventHandler for TcpListenerHandler<H> {
 
             match listener.accept() {
                 Ok((stream, peer_addr)) => {
+                    // Atomically check and increment the connection count.
                     if let Some(max) = self.config.max_connections {
-                        if self.connections.iter().count() >= max {
+                        if self.connection_counter.fetch_add(1, Ordering::SeqCst) >= max {
+                            self.connection_counter.fetch_sub(1, Ordering::SeqCst); // Revert if limit exceeded
                             self.logger.log(
                                 LogLevel::Warn,
                                 &format!("Max connections reached, rejecting {}", peer_addr),
                             );
-                            // The stream is dropped here, closing the connection.
                             continue;
                         }
+                    } else {
+                        self.connection_counter.fetch_add(1, Ordering::SeqCst);
                     }
 
                     if let Err(e) = stream.set_nodelay(self.config.no_delay) {
@@ -296,6 +303,7 @@ impl<H: NetworkHandler> EventHandler for TcpListenerHandler<H> {
                         handler: self.handler.clone(),
                         buffer_pool: self.buffer_pool.clone(),
                         event_loop: self.event_loop.clone(),
+                        connection_counter: self.connection_counter.clone(),
                         logger: self.logger.clone(),
                     };
 
@@ -306,6 +314,7 @@ impl<H: NetworkHandler> EventHandler for TcpListenerHandler<H> {
                             LogLevel::Error,
                             "EventLoop is gone, cannot register new connection",
                         );
+                        self.connection_counter.fetch_sub(1, Ordering::SeqCst);
                         // The stream is dropped here, closing the connection.
                         continue;
                     };
@@ -333,6 +342,7 @@ impl<H: NetworkHandler> EventHandler for TcpListenerHandler<H> {
                             LogLevel::Error,
                             &format!("Failed to register connection: {}", e),
                         );
+                        self.connection_counter.fetch_sub(1, Ordering::SeqCst);
                         continue;
                     }
 
@@ -354,6 +364,7 @@ impl<H: NetworkHandler> EventHandler for TcpListenerHandler<H> {
                                 let _ = event_loop.deregister(&mut *stream, conn.val().token);
                             }
                         }
+                        self.connection_counter.fetch_sub(1, Ordering::SeqCst);
                         continue;
                     }
 
@@ -383,6 +394,7 @@ struct TcpConnectionHandler<H: NetworkHandler> {
     handler: Arc<H>,
     buffer_pool: ObjectPool<Vec<u8>>,
     event_loop: Weak<EventLoop>,
+    connection_counter: Arc<AtomicUsize>,
     logger: Arc<dyn Logger>,
 }
 
@@ -455,6 +467,7 @@ impl<H: NetworkHandler> TcpConnectionHandler<H> {
 
     fn disconnect(&self) {
         if let Some(conn) = self.connections.remove(&self.conn_id.as_u64()) {
+            self.connection_counter.fetch_sub(1, Ordering::SeqCst);
             if let Some(event_loop) = self.event_loop.upgrade() {
                 if let Ok(mut stream) = conn.val().stream.lock() {
                     let _ = event_loop.deregister(&mut *stream, conn.val().token);
@@ -518,8 +531,12 @@ impl<H: NetworkHandler> TcpClient<H> {
             )
         })?;
 
+        let stream = stream_guard
+            .as_mut()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "TCP stream is None"))?;
+
         event_loop.register(
-            stream_guard.as_mut().unwrap(),
+            stream,
             token,
             Interest::READABLE | Interest::WRITABLE,
             handler,
