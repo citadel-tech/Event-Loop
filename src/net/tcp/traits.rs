@@ -1,6 +1,8 @@
 use crate::error::Result;
 use std::io::Error;
 
+use super::ServerContext;
+
 /// Unique identifier for connections.
 ///
 /// Each TCP connection is assigned a unique ConnectionId when accepted or established.
@@ -41,28 +43,29 @@ impl ConnectionId {
 /// will be closed automatically when handlers return errors from on_data.
 pub trait NetworkHandler: Send + Sync + Logger + 'static {
     /// Called when connection is established (TCP only)
-    fn on_connect(&self, conn_id: ConnectionId) -> Result<()> {
-        let _ = conn_id;
+    fn on_connect(&self, ctx: &ServerContext, conn_id: ConnectionId) -> Result<()> {
+        let _ = (ctx, conn_id);
         Ok(())
     }
 
     /// Called when data is received
-    fn on_data(&self, conn_id: ConnectionId, data: &[u8]) -> Result<()>;
+    fn on_data(&self, ctx: &ServerContext, conn_id: ConnectionId, data: &[u8]) -> Result<()>;
 
     /// Called when connection is closed (TCP only)
-    fn on_disconnect(&self, conn_id: ConnectionId) -> Result<()> {
-        let _ = conn_id;
+    fn on_disconnect(&self, ctx: &ServerContext, conn_id: ConnectionId) -> Result<()> {
+        let _ = (ctx, conn_id);
         Ok(())
     }
 
     /// Called on write readiness (for backpressure handling)
-    fn on_writable(&self, conn_id: ConnectionId) -> Result<()> {
-        let _ = conn_id;
+    fn on_writable(&self, ctx: &ServerContext, conn_id: ConnectionId) -> Result<()> {
+        let _ = (ctx, conn_id);
         Ok(())
     }
 
     /// Called on errors
-    fn on_error(&self, conn_id: ConnectionId, error: Error) {
+    fn on_error(&self, ctx: &ServerContext, conn_id: ConnectionId, error: Error) {
+        let _ = ctx;
         self.log(
             LogLevel::Error,
             &format!("Connection {:?} error: {}", conn_id, error),

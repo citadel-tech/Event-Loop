@@ -65,7 +65,7 @@
 //! to a specific logging framework.
 //!
 //! ```rust
-//! use mill_io::net::tcp::traits::{NetworkHandler, ConnectionId, Logger, LogLevel};
+//! use mill_io::net::tcp::traits::{NetworkHandler, ConnectionId, Logger, LogLevel, ServerContext};
 //! use mill_io::error::Result;
 //!
 //! struct MyHandler;
@@ -81,8 +81,9 @@
 //! }
 //!
 //! impl NetworkHandler for MyHandler {
-//!     fn on_data(&self, conn_id: ConnectionId, data: &[u8]) -> Result<()> {
+//!     fn on_data(&self, ctx: &ServerContext, conn_id: ConnectionId, data: &[u8]) -> Result<()> {
 //!         self.log(LogLevel::Info, &format!("Received {} bytes from {:?}", data.len(), conn_id));
+//!         ctx.send_to(conn_id, b"some response")?;
 //!         Ok(())
 //!     }
 //! }
@@ -108,6 +109,52 @@ use std::sync::{
     Arc, Mutex, Weak,
 };
 
+/// Context for network handlers to interact with the server.
+pub struct ServerContext {
+    server: Weak<dyn ServerOperations>,
+    event_loop: Weak<EventLoop>,
+}
+
+impl ServerContext {
+    /// Send data to a specific connection.
+    pub fn send_to(&self, conn_id: ConnectionId, data: &[u8]) -> Result<()> {
+        if let Some(server) = self.server.upgrade() {
+            server.send_to(conn_id, data)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Broadcast data to all connections.
+    pub fn broadcast(&self, data: &[u8]) -> Result<()> {
+        if let Some(server) = self.server.upgrade() {
+            server.broadcast(data)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Close a specific connection.
+    pub fn close_connection(&self, conn_id: ConnectionId) -> Result<()> {
+        if let Some(server) = self.server.upgrade() {
+            if let Some(event_loop) = self.event_loop.upgrade() {
+                server.close_connection(&event_loop, conn_id)
+            } else {
+                Ok(())
+            }
+        } else {
+            Ok(())
+        }
+    }
+}
+
+/// Trait defining server operations, allowing for a weak reference from the context.
+trait ServerOperations: Send + Sync {
+    fn send_to(&self, conn_id: ConnectionId, data: &[u8]) -> Result<()>;
+    fn broadcast(&self, data: &[u8]) -> Result<()>;
+    fn close_connection(&self, event_loop: &EventLoop, conn_id: ConnectionId) -> Result<()>;
+}
+
 /// High-level TCP server
 pub struct TcpServer<H: NetworkHandler> {
     listener: Arc<Mutex<TcpListener>>,
@@ -118,6 +165,7 @@ pub struct TcpServer<H: NetworkHandler> {
     next_conn_id: Arc<AtomicU64>,
     connection_counter: Arc<AtomicUsize>,
     logger: Arc<dyn Logger>,
+    context: Arc<ServerContext>,
 }
 
 impl<H: NetworkHandler> TcpServer<H> {
@@ -134,11 +182,24 @@ impl<H: NetworkHandler> TcpServer<H> {
             connection_counter: Arc::new(AtomicUsize::new(0)),
             logger,
             config,
+            context: Arc::new(ServerContext {
+                server: Weak::<TcpServer<H>>::new(),
+                event_loop: Weak::new(),
+            }),
         })
     }
 
     /// Start the server by registering with the event loop
-    pub fn start(&self, event_loop: &Arc<EventLoop>, listener_token: Token) -> Result<()> {
+    pub fn start(self: Arc<Self>, event_loop: &Arc<EventLoop>, listener_token: Token) -> Result<()> {
+        // `self` is an Arc<TcpServer<H>>, so we can create a weak pointer to it.
+        let server_weak = Arc::downgrade(&self) as Weak<dyn ServerOperations>;
+
+        // Update the context with weak references.
+        let context_mut =
+            unsafe { &mut *(Arc::as_ptr(&self.context) as *mut ServerContext) };
+        context_mut.server = server_weak;
+        context_mut.event_loop = Arc::downgrade(event_loop);
+
         let listener_handler = TcpListenerHandler {
             listener: self.listener.clone(),
             connections: self.connections.clone(),
@@ -149,6 +210,7 @@ impl<H: NetworkHandler> TcpServer<H> {
             event_loop: Arc::downgrade(event_loop),
             connection_counter: self.connection_counter.clone(),
             logger: self.logger.clone(),
+            context: self.context.clone(),
         };
 
         let mut listener = self.listener.lock().map_err(|e| {
@@ -172,9 +234,11 @@ impl<H: NetworkHandler> TcpServer<H> {
     pub fn connection_count(&self) -> usize {
         self.connection_counter.load(Ordering::SeqCst)
     }
+}
 
+impl<H: NetworkHandler> ServerOperations for TcpServer<H> {
     /// Send data to a specific connection
-    pub fn send_to(&self, conn_id: ConnectionId, data: &[u8]) -> Result<()> {
+    fn send_to(&self, conn_id: ConnectionId, data: &[u8]) -> Result<()> {
         if let Some(conn) = self.connections.get(&conn_id.as_u64()) {
             let mut stream = conn.val().stream.lock().map_err(|e| {
                 io::Error::new(
@@ -188,7 +252,7 @@ impl<H: NetworkHandler> TcpServer<H> {
     }
 
     /// Close a specific connection
-    pub fn close_connection(&self, event_loop: &EventLoop, conn_id: ConnectionId) -> Result<()> {
+    fn close_connection(&self, event_loop: &EventLoop, conn_id: ConnectionId) -> Result<()> {
         if let Some(conn) = self.connections.remove(&conn_id.as_u64()) {
             let mut stream = match conn.val().stream.lock() {
                 Ok(s) => s,
@@ -204,7 +268,7 @@ impl<H: NetworkHandler> TcpServer<H> {
             let _ = event_loop.deregister(&mut *stream, conn.val().token);
             let _ = stream.shutdown(std::net::Shutdown::Both);
 
-            if let Err(e) = self.handler.on_disconnect(conn_id) {
+            if let Err(e) = self.handler.on_disconnect(&self.context, conn_id) {
                 self.logger.log(
                     LogLevel::Error,
                     &format!("Handler on_disconnect error: {}", e),
@@ -215,7 +279,7 @@ impl<H: NetworkHandler> TcpServer<H> {
     }
 
     /// Broadcast data to all connections
-    pub fn broadcast(&self, data: &[u8]) -> Result<()> {
+    fn broadcast(&self, data: &[u8]) -> Result<()> {
         for conn in self.connections.iter() {
             if let Ok(mut stream) = conn.val().stream.lock() {
                 let _ = stream.write_all(data);
@@ -244,6 +308,7 @@ struct TcpListenerHandler<H: NetworkHandler> {
     event_loop: Weak<EventLoop>,
     connection_counter: Arc<AtomicUsize>,
     logger: Arc<dyn Logger>,
+    context: Arc<ServerContext>,
 }
 
 // Safety: We ensure event_loop_ref is valid for the lifetime of the handler
@@ -305,6 +370,7 @@ impl<H: NetworkHandler> EventHandler for TcpListenerHandler<H> {
                         event_loop: self.event_loop.clone(),
                         connection_counter: self.connection_counter.clone(),
                         logger: self.logger.clone(),
+                        context: self.context.clone(),
                     };
 
                     let event_loop = if let Some(arc) = self.event_loop.upgrade() {
@@ -354,7 +420,7 @@ impl<H: NetworkHandler> EventHandler for TcpListenerHandler<H> {
                     self.connections.insert(conn_id.as_u64(), conn);
 
                     // If the user's on_connect handler fails, we must clean up the connection.
-                    if let Err(e) = self.handler.on_connect(conn_id) {
+                    if let Err(e) = self.handler.on_connect(&self.context, conn_id) {
                         self.logger
                             .log(LogLevel::Error, &format!("Handler on_connect error: {}", e));
 
@@ -396,6 +462,7 @@ struct TcpConnectionHandler<H: NetworkHandler> {
     event_loop: Weak<EventLoop>,
     connection_counter: Arc<AtomicUsize>,
     logger: Arc<dyn Logger>,
+    context: Arc<ServerContext>,
 }
 
 unsafe impl<H: NetworkHandler> Send for TcpConnectionHandler<H> {}
@@ -411,7 +478,7 @@ impl<H: NetworkHandler> EventHandler for TcpConnectionHandler<H> {
         }
 
         if is_writable {
-            if let Err(e) = self.handler.on_writable(self.conn_id) {
+            if let Err(e) = self.handler.on_writable(&self.context, self.conn_id) {
                 self.logger.log(
                     LogLevel::Error,
                     &format!("Handler on_writable error: {}", e),
@@ -449,7 +516,10 @@ impl<H: NetworkHandler> TcpConnectionHandler<H> {
                 self.disconnect();
             }
             Ok(n) => {
-                if let Err(e) = self.handler.on_data(self.conn_id, &buffer.as_ref()[..n]) {
+                if let Err(e) = self
+                    .handler
+                    .on_data(&self.context, self.conn_id, &buffer.as_ref()[..n])
+                {
                     self.logger
                         .log(LogLevel::Error, &format!("Handler on_data error: {}", e));
                     self.disconnect();
@@ -459,7 +529,7 @@ impl<H: NetworkHandler> TcpConnectionHandler<H> {
                 // expected for non-blocking I/O
             }
             Err(e) => {
-                self.handler.on_error(self.conn_id, e);
+                self.handler.on_error(&self.context, self.conn_id, e);
                 self.disconnect();
             }
         }
@@ -474,7 +544,7 @@ impl<H: NetworkHandler> TcpConnectionHandler<H> {
                 }
             }
 
-            if let Err(e) = self.handler.on_disconnect(self.conn_id) {
+            if let Err(e) = self.handler.on_disconnect(&self.context, self.conn_id) {
                 self.logger.log(
                     LogLevel::Error,
                     &format!("Handler on_disconnect error: {}", e),
@@ -491,6 +561,7 @@ pub struct TcpClient<H: NetworkHandler> {
     buffer_pool: ObjectPool<Vec<u8>>,
     conn_id: ConnectionId,
     logger: Arc<dyn Logger>,
+    context: Arc<ServerContext>,
 }
 
 impl<H: NetworkHandler> TcpClient<H> {
@@ -511,10 +582,18 @@ impl<H: NetworkHandler> TcpClient<H> {
             buffer_pool: ObjectPool::new(5, || vec![0; 8192]),
             conn_id: ConnectionId::new(1),
             logger,
+            context: Arc::new(ServerContext {
+                server: Weak::<TcpClient<H>>::new(),
+                event_loop: Weak::new(),
+            }),
         })
     }
 
     pub fn start(&mut self, event_loop: &Arc<EventLoop>, token: Token) -> Result<()> {
+        let context_mut =
+            unsafe { &mut *(Arc::as_ptr(&self.context) as *mut ServerContext) };
+        context_mut.event_loop = Arc::downgrade(event_loop);
+
         let handler = TcpClientHandler {
             conn_id: self.conn_id,
             stream: self.stream.clone(),
@@ -522,6 +601,7 @@ impl<H: NetworkHandler> TcpClient<H> {
             buffer_pool: self.buffer_pool.clone(),
             logger: self.logger.clone(),
             event_loop: Arc::downgrade(event_loop),
+            context: self.context.clone(),
         };
 
         let mut stream_guard = self.stream.lock().map_err(|e| {
@@ -542,12 +622,12 @@ impl<H: NetworkHandler> TcpClient<H> {
             handler,
         )?;
 
-        self.handler.on_connect(self.conn_id)?;
+        self.handler.on_connect(&self.context, self.conn_id)?;
 
         Ok(())
     }
 
-    pub fn send(&mut self, data: &[u8]) -> Result<()> {
+    pub fn send(&self, data: &[u8]) -> Result<()> {
         if let Ok(mut stream_guard) = self.stream.lock() {
             if let Some(stream) = stream_guard.as_mut() {
                 stream.write_all(data)?;
@@ -556,12 +636,35 @@ impl<H: NetworkHandler> TcpClient<H> {
         Ok(())
     }
 
-    pub fn disconnect(&mut self) -> Result<()> {
+    pub fn disconnect(&self) -> Result<()> {
         if let Ok(mut stream_guard) = self.stream.lock() {
             *stream_guard = None;
         }
-        self.handler.on_disconnect(self.conn_id)?;
+        self.handler.on_disconnect(&self.context, self.conn_id)?;
         Ok(())
+    }
+}
+
+impl<H: NetworkHandler> ServerOperations for TcpClient<H> {
+    fn send_to(&self, conn_id: ConnectionId, data: &[u8]) -> Result<()> {
+        if conn_id == self.conn_id {
+            self.send(data)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn broadcast(&self, _data: &[u8]) -> Result<()> {
+        // No-op for a client
+        Ok(())
+    }
+
+    fn close_connection(&self, _event_loop: &EventLoop, conn_id: ConnectionId) -> Result<()> {
+        if conn_id == self.conn_id {
+            self.disconnect()
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -572,6 +675,7 @@ struct TcpClientHandler<H: NetworkHandler> {
     buffer_pool: ObjectPool<Vec<u8>>,
     logger: Arc<dyn Logger>,
     event_loop: Weak<EventLoop>,
+    context: Arc<ServerContext>,
 }
 
 impl<H: NetworkHandler> EventHandler for TcpClientHandler<H> {
@@ -580,7 +684,7 @@ impl<H: NetworkHandler> EventHandler for TcpClientHandler<H> {
             self.handle_read();
         }
         if event.is_writable() {
-            if let Err(e) = self.handler.on_writable(self.conn_id) {
+            if let Err(e) = self.handler.on_writable(&self.context, self.conn_id) {
                 self.logger.log(
                     LogLevel::Error,
                     &format!("Handler on_writable error: {}", e),
@@ -620,7 +724,10 @@ impl<H: NetworkHandler> TcpClientHandler<H> {
                 self.disconnect();
             }
             Ok(n) => {
-                if let Err(e) = self.handler.on_data(self.conn_id, &buffer.as_ref()[..n]) {
+                if let Err(e) = self
+                    .handler
+                    .on_data(&self.context, self.conn_id, &buffer.as_ref()[..n])
+                {
                     self.logger
                         .log(LogLevel::Error, &format!("Handler on_data error: {}", e));
                     self.disconnect();
@@ -632,7 +739,7 @@ impl<H: NetworkHandler> TcpClientHandler<H> {
             Err(e) => {
                 self.logger
                     .log(LogLevel::Error, &format!("Read error: {}", e));
-                self.handler.on_error(self.conn_id, e);
+                self.handler.on_error(&self.context, self.conn_id, e);
                 self.disconnect();
             }
         }
@@ -656,7 +763,7 @@ impl<H: NetworkHandler> TcpClientHandler<H> {
         }
         *stream_guard = None;
 
-        if let Err(e) = self.handler.on_disconnect(self.conn_id) {
+        if let Err(e) = self.handler.on_disconnect(&self.context, self.conn_id) {
             self.logger.log(
                 LogLevel::Error,
                 &format!("Handler on_disconnect error: {}", e),
