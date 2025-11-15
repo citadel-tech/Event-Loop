@@ -517,12 +517,9 @@ impl<H: NetworkHandler> TcpClientHandler<H> {
 
     fn disconnect(&self) {
         let mut stream_guard = self.stream.lock().unwrap();
-        if let Some(stream) = stream_guard.take() {
+        if let Some(stream) = stream_guard.as_mut() {
             if let Some(event_loop) = self.event_loop.upgrade() {
-                // We need to construct a temporary stream to deregister.
-                // This is a bit of a hack due to mio's API.
-                let mut temp_stream = stream;
-                let _ = event_loop.deregister(&mut temp_stream, Token(self.conn_id.as_u64() as usize));
+                let _ = event_loop.deregister(stream, Token(self.conn_id.as_u64() as usize));
             }
         }
         *stream_guard = None;
