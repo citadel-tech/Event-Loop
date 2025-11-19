@@ -77,7 +77,7 @@ fn main() -> Result<()> {
         .build();
 
     // create an instance of our handler.
-    let handler = EchoHandler::default();
+    let handler = EchoHandler;
 
     // create the tcp server, wrapped in an Arc for shared ownership.
     let server = Arc::new(TcpServer::new(config.clone(), handler)?);

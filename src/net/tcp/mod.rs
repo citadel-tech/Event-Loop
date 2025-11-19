@@ -47,7 +47,6 @@
 //! ```rust
 //! use mill_io::net::tcp::config::TcpServerConfig;
 //! # use std::sync::Arc;
-//! # use mill_io::net::tcp::traits::NoOpLogger;
 //!
 //! let config = TcpServerConfig::builder()
 //!     .address("0.0.0.0:8080".parse().unwrap())
@@ -769,7 +768,7 @@ impl<H: NetworkHandler> TcpClientHandler<H> {
                 let _ = event_loop.deregister(stream, Token(self.conn_id.as_u64() as usize));
             }
         }
-        
+
         *stream_guard = None;
 
         if let Err(e) = self.handler.on_disconnect(&self.context, self.conn_id) {

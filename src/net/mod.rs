@@ -39,17 +39,11 @@
 //!
 //! ```rust,no_run
 //! use mill_io::net::tcp::{TcpServer, TcpServerConfig};
-//! use mill_io::net::tcp::{traits::{NetworkHandler, ConnectionId, Logger, LogLevel}, ServerContext};
+//! use mill_io::net::tcp::{traits::{NetworkHandler, ConnectionId}, ServerContext};
 //! use mill_io::{EventLoop, error::Result};
 //! use std::sync::Arc;
 //!
 //! struct EchoHandler;
-//!
-//! impl Logger for EchoHandler {
-//!     fn log(&self, level: LogLevel, message: &str) {
-//!         println!("[{:?}] {}", level, message);
-//!     }
-//! }
 //!
 //! impl NetworkHandler for EchoHandler {
 //!     fn on_data(&self, _ctx: &ServerContext, _conn_id: ConnectionId, data: &[u8]) -> Result<()> {
