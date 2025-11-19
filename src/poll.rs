@@ -1,5 +1,5 @@
 // TODO: add custom error module and use it here
-use lockfree::map::Map;
+use lock_freedom::map::Map;
 use mio::{Events, Interest, Poll, Token};
 use std::sync::{Arc, RwLock};
 
