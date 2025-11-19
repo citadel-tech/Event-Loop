@@ -75,3 +75,4 @@
 //! ```
 
 pub mod tcp;
+pub mod errors;

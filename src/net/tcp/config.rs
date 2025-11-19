@@ -1,6 +1,4 @@
-use std::{net::SocketAddr, sync::Arc};
-
-use crate::net::tcp::traits::{Logger, NoOpLogger};
+use std::net::SocketAddr;
 
 /// Configuration for TCP server.
 ///
@@ -28,8 +26,6 @@ pub struct TcpServerConfig {
     pub no_delay: bool,
     /// SO_KEEPALIVE setting
     pub keep_alive: Option<std::time::Duration>,
-    /// Logger for network events
-    pub logger: Arc<dyn Logger>,
 }
 
 impl TcpServerConfig {
@@ -47,7 +43,6 @@ impl Default for TcpServerConfig {
             max_connections: None,
             no_delay: true,
             keep_alive: Some(std::time::Duration::from_secs(60)),
-            logger: Arc::new(NoOpLogger),
         }
     }
 }
@@ -62,7 +57,6 @@ pub struct TcpServerConfigBuilder {
     max_connections: Option<usize>,
     no_delay: Option<bool>,
     keep_alive: Option<Option<std::time::Duration>>,
-    logger: Option<Arc<dyn Logger>>,
 }
 
 impl TcpServerConfigBuilder {
@@ -74,7 +68,6 @@ impl TcpServerConfigBuilder {
             max_connections: None,
             no_delay: None,
             keep_alive: None,
-            logger: None,
         }
     }
 
@@ -108,12 +101,6 @@ impl TcpServerConfigBuilder {
         self
     }
 
-    /// Set the logger implementation
-    pub fn logger(mut self, logger: Arc<dyn Logger>) -> Self {
-        self.logger = Some(logger);
-        self
-    }
-
     /// Build the TcpServerConfig
     pub fn build(self) -> TcpServerConfig {
         let default = TcpServerConfig::default();
@@ -123,7 +110,6 @@ impl TcpServerConfigBuilder {
             max_connections: self.max_connections.or(default.max_connections),
             no_delay: self.no_delay.unwrap_or(default.no_delay),
             keep_alive: self.keep_alive.unwrap_or(default.keep_alive),
-            logger: self.logger.unwrap_or(default.logger),
         }
     }
 }
@@ -137,7 +123,6 @@ impl Default for TcpServerConfigBuilder {
             max_connections: default.max_connections,
             no_delay: Some(default.no_delay),
             keep_alive: Some(default.keep_alive),
-            logger: Some(default.logger),
         }
     }
 }

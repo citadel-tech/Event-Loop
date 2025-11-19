@@ -54,35 +54,22 @@
 //!     .buffer_size(16384)              // Larger buffers for high throughput
 //!     .max_connections(1000)           // Limit concurrent connections
 //!     .no_delay(true)                  // Disable Nagle's algorithm
-//!     .logger(Arc::new(NoOpLogger))    // Custom logging implementation
 //!     .build();
 //! ```
 //!
 //! ## Handler Implementation
 //!
-//! Your handler must implement both NetworkHandler and Logger traits. The Logger
-//! trait requirement allows handlers to emit their own logging without coupling
-//! to a specific logging framework.
+//! Your handler must implement NetworkHandler trait.
 //!
 //! ```rust
-//! use mill_io::net::tcp::{traits::{NetworkHandler, ConnectionId, Logger, LogLevel}, ServerContext};
+//! use mill_io::net::tcp::{traits::{NetworkHandler, ConnectionId}, ServerContext};
 //! use mill_io::error::Result;
 //!
 //! struct MyHandler;
 //!
-//! impl Logger for MyHandler {
-//!     fn log(&self, level: LogLevel, message: &str) {
-//!         match level {
-//!             LogLevel::Error => eprintln!("{}", message),
-//!             LogLevel::Info => println!("{}", message),
-//!             _ => {}
-//!         }
-//!     }
-//! }
-//!
 //! impl NetworkHandler for MyHandler {
 //!     fn on_data(&self, ctx: &ServerContext, conn_id: ConnectionId, data: &[u8]) -> Result<()> {
-//!         self.log(LogLevel::Info, &format!("Received {} bytes from {:?}", data.len(), conn_id));
+//!         println!("Received {} bytes from {:?}", data.len(), conn_id);
 //!         ctx.send_to(conn_id, b"some response")?;
 //!         Ok(())
 //!     }
@@ -96,6 +83,7 @@ pub use config::TcpServerConfig;
 pub use traits::*;
 
 use crate::error::Result;
+use crate::net::errors::{NetworkError, NetworkEvent};
 use crate::{EventHandler, EventLoop, ObjectPool, PooledObject};
 use lockfree::map::Map as LockfreeMap;
 use mio::event::Event;
@@ -164,14 +152,12 @@ pub struct TcpServer<H: NetworkHandler> {
     buffer_pool: ObjectPool<Vec<u8>>,
     next_conn_id: Arc<AtomicU64>,
     connection_counter: Arc<AtomicUsize>,
-    logger: Arc<dyn Logger>,
     context: Arc<ServerContext>,
 }
 
 impl<H: NetworkHandler> TcpServer<H> {
     pub fn new(config: TcpServerConfig, handler: H) -> Result<Self> {
         let listener = TcpListener::bind(config.address)?;
-        let logger = config.logger.clone();
 
         Ok(Self {
             listener: Arc::new(Mutex::new(listener)),
@@ -180,7 +166,6 @@ impl<H: NetworkHandler> TcpServer<H> {
             buffer_pool: ObjectPool::new(20, move || vec![0; config.buffer_size]),
             next_conn_id: Arc::new(AtomicU64::new(1)),
             connection_counter: Arc::new(AtomicUsize::new(0)),
-            logger,
             config,
             context: Arc::new(ServerContext {
                 server: Weak::<TcpServer<H>>::new(),
@@ -212,7 +197,6 @@ impl<H: NetworkHandler> TcpServer<H> {
             next_conn_id: self.next_conn_id.clone(),
             event_loop: Arc::downgrade(event_loop),
             connection_counter: self.connection_counter.clone(),
-            logger: self.logger.clone(),
             context: self.context.clone(),
         };
 
@@ -260,9 +244,10 @@ impl<H: NetworkHandler> ServerOperations for TcpServer<H> {
             let mut stream = match conn.val().stream.lock() {
                 Ok(s) => s,
                 Err(e) => {
-                    self.logger.log(
-                        LogLevel::Error,
-                        &format!("Stream mutex poisoned on close for {:?}: {}", conn_id, e),
+                    self.handler.on_error(
+                        &self.context,
+                        Some(conn_id),
+                        NetworkError::PoisonedLock(format!("Stream mutex on close: {}", e)),
                     );
                     e.into_inner()
                 }
@@ -272,11 +257,14 @@ impl<H: NetworkHandler> ServerOperations for TcpServer<H> {
             let _ = stream.shutdown(std::net::Shutdown::Both);
 
             if let Err(e) = self.handler.on_disconnect(&self.context, conn_id) {
-                self.logger.log(
-                    LogLevel::Error,
-                    &format!("Handler on_disconnect error: {}", e),
+                self.handler.on_error(
+                    &self.context,
+                    Some(conn_id),
+                    NetworkError::HandlerError(format!("on_disconnect: {}", e)),
                 );
             }
+            
+            let _ = self.handler.on_event(&self.context, NetworkEvent::ConnectionClosed(conn_id));
         }
         Ok(())
     }
@@ -310,7 +298,6 @@ struct TcpListenerHandler<H: NetworkHandler> {
     next_conn_id: Arc<AtomicU64>,
     event_loop: Weak<EventLoop>,
     connection_counter: Arc<AtomicUsize>,
-    logger: Arc<dyn Logger>,
     context: Arc<ServerContext>,
 }
 
@@ -328,9 +315,10 @@ impl<H: NetworkHandler> EventHandler for TcpListenerHandler<H> {
             let listener = match self.listener.lock() {
                 Ok(l) => l,
                 Err(e) => {
-                    self.logger.log(
-                        LogLevel::Error,
-                        &format!("Listener mutex poisoned: {}. Aborting accept loop.", e),
+                    self.handler.on_error(
+                        &self.context,
+                        None,
+                        NetworkError::PoisonedLock(format!("Listener mutex: {}", e)),
                     );
                     return;
                 }
@@ -342,9 +330,10 @@ impl<H: NetworkHandler> EventHandler for TcpListenerHandler<H> {
                     if let Some(max) = self.config.max_connections {
                         if self.connection_counter.fetch_add(1, Ordering::SeqCst) >= max {
                             self.connection_counter.fetch_sub(1, Ordering::SeqCst); // Revert if limit exceeded
-                            self.logger.log(
-                                LogLevel::Warn,
-                                &format!("Max connections reached, rejecting {}", peer_addr),
+                            self.handler.on_error(
+                                &self.context,
+                                None,
+                                NetworkError::MaxConnectionsReached(peer_addr),
                             );
                             continue;
                         }
@@ -353,9 +342,10 @@ impl<H: NetworkHandler> EventHandler for TcpListenerHandler<H> {
                     }
 
                     if let Err(e) = stream.set_nodelay(self.config.no_delay) {
-                        self.logger.log(
-                            LogLevel::Error,
-                            &format!("Failed to set TCP_NODELAY: {}", e),
+                        self.handler.on_error(
+                            &self.context,
+                            None,
+                            NetworkError::Configuration(format!("Failed to set TCP_NODELAY: {}", e)),
                         );
                     }
 
@@ -372,16 +362,16 @@ impl<H: NetworkHandler> EventHandler for TcpListenerHandler<H> {
                         buffer_pool: self.buffer_pool.clone(),
                         event_loop: self.event_loop.clone(),
                         connection_counter: self.connection_counter.clone(),
-                        logger: self.logger.clone(),
                         context: self.context.clone(),
                     };
 
                     let event_loop = if let Some(arc) = self.event_loop.upgrade() {
                         arc
                     } else {
-                        self.logger.log(
-                            LogLevel::Error,
-                            "EventLoop is gone, cannot register new connection",
+                        self.handler.on_error(
+                            &self.context,
+                            None,
+                            NetworkError::EventLoopGone,
                         );
                         self.connection_counter.fetch_sub(1, Ordering::SeqCst);
                         // The stream is dropped here, closing the connection.
@@ -392,9 +382,10 @@ impl<H: NetworkHandler> EventHandler for TcpListenerHandler<H> {
                     let mut stream_guard = match stream_arc.lock() {
                         Ok(s) => s,
                         Err(e) => {
-                            self.logger.log(
-                                LogLevel::Error,
-                                &format!("Stream mutex poisoned during registration: {}", e),
+                            self.handler.on_error(
+                                &self.context,
+                                Some(conn_id),
+                                NetworkError::PoisonedLock(format!("Stream mutex registration: {}", e)),
                             );
                             continue;
                         }
@@ -407,9 +398,10 @@ impl<H: NetworkHandler> EventHandler for TcpListenerHandler<H> {
                         Interest::READABLE | Interest::WRITABLE,
                         conn_handler,
                     ) {
-                        self.logger.log(
-                            LogLevel::Error,
-                            &format!("Failed to register connection: {}", e),
+                        self.handler.on_error(
+                            &self.context,
+                            Some(conn_id),
+                            NetworkError::Io(e),
                         );
                         self.connection_counter.fetch_sub(1, Ordering::SeqCst);
                         continue;
@@ -422,10 +414,18 @@ impl<H: NetworkHandler> EventHandler for TcpListenerHandler<H> {
                     };
                     self.connections.insert(conn_id.as_u64(), conn);
 
+                    let _ = self.handler.on_event(
+                        &self.context,
+                        NetworkEvent::ConnectionEstablished(conn_id, peer_addr),
+                    );
+
                     // If the user's on_connect handler fails, we must clean up the connection.
                     if let Err(e) = self.handler.on_connect(&self.context, conn_id) {
-                        self.logger
-                            .log(LogLevel::Error, &format!("Handler on_connect error: {}", e));
+                        self.handler.on_error(
+                            &self.context,
+                            Some(conn_id),
+                            NetworkError::HandlerError(format!("on_connect: {}", e)),
+                        );
 
                         // Remove the connection from the map and deregister from the event loop.
                         if let Some(conn) = self.connections.remove(&conn_id.as_u64()) {
@@ -436,18 +436,12 @@ impl<H: NetworkHandler> EventHandler for TcpListenerHandler<H> {
                         self.connection_counter.fetch_sub(1, Ordering::SeqCst);
                         continue;
                     }
-
-                    self.logger.log(
-                        LogLevel::Info,
-                        &format!("New connection: {} (id: {:?})", peer_addr, conn_id),
-                    );
                 }
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                     break;
                 }
                 Err(e) => {
-                    self.logger
-                        .log(LogLevel::Error, &format!("Accept error: {}", e));
+                    self.handler.on_error(&self.context, None, NetworkError::Accept(Box::new(e)));
                     break;
                 }
             }
@@ -464,7 +458,6 @@ struct TcpConnectionHandler<H: NetworkHandler> {
     buffer_pool: ObjectPool<Vec<u8>>,
     event_loop: Weak<EventLoop>,
     connection_counter: Arc<AtomicUsize>,
-    logger: Arc<dyn Logger>,
     context: Arc<ServerContext>,
 }
 
@@ -482,9 +475,10 @@ impl<H: NetworkHandler> EventHandler for TcpConnectionHandler<H> {
 
         if is_writable {
             if let Err(e) = self.handler.on_writable(&self.context, self.conn_id) {
-                self.logger.log(
-                    LogLevel::Error,
-                    &format!("Handler on_writable error: {}", e),
+                self.handler.on_error(
+                    &self.context,
+                    Some(self.conn_id),
+                    NetworkError::HandlerError(format!("on_writable: {}", e)),
                 );
             }
         }
@@ -499,12 +493,10 @@ impl<H: NetworkHandler> TcpConnectionHandler<H> {
             let mut stream = match self.stream.lock() {
                 Ok(s) => s,
                 Err(e) => {
-                    self.logger.log(
-                        LogLevel::Error,
-                        &format!(
-                            "Stream mutex poisoned on read for {:?}: {}",
-                            self.conn_id, e
-                        ),
+                    self.handler.on_error(
+                        &self.context,
+                        Some(self.conn_id),
+                        NetworkError::PoisonedLock(format!("Stream mutex read: {}", e)),
                     );
                     self.disconnect();
                     return;
@@ -519,12 +511,15 @@ impl<H: NetworkHandler> TcpConnectionHandler<H> {
                 self.disconnect();
             }
             Ok(n) => {
-                if let Err(e) =
-                    self.handler
-                        .on_data(&self.context, self.conn_id, &buffer.as_ref()[..n])
+                if let Err(e) = self
+                    .handler
+                    .on_data(&self.context, self.conn_id, &buffer.as_ref()[..n])
                 {
-                    self.logger
-                        .log(LogLevel::Error, &format!("Handler on_data error: {}", e));
+                    self.handler.on_error(
+                        &self.context,
+                        Some(self.conn_id),
+                        NetworkError::HandlerError(format!("on_data: {}", e)),
+                    );
                     self.disconnect();
                 }
             }
@@ -532,7 +527,7 @@ impl<H: NetworkHandler> TcpConnectionHandler<H> {
                 // expected for non-blocking I/O
             }
             Err(e) => {
-                self.handler.on_error(&self.context, self.conn_id, e);
+                self.handler.on_error(&self.context, Some(self.conn_id), NetworkError::Io(Box::new(e)));
                 self.disconnect();
             }
         }
@@ -548,11 +543,14 @@ impl<H: NetworkHandler> TcpConnectionHandler<H> {
             }
 
             if let Err(e) = self.handler.on_disconnect(&self.context, self.conn_id) {
-                self.logger.log(
-                    LogLevel::Error,
-                    &format!("Handler on_disconnect error: {}", e),
+                self.handler.on_error(
+                    &self.context,
+                    Some(self.conn_id),
+                    NetworkError::HandlerError(format!("on_disconnect: {}", e)),
                 );
             }
+            
+            let _ = self.handler.on_event(&self.context, NetworkEvent::ConnectionClosed(self.conn_id));
         }
     }
 }
@@ -563,20 +561,11 @@ pub struct TcpClient<H: NetworkHandler> {
     handler: Arc<H>,
     buffer_pool: ObjectPool<Vec<u8>>,
     conn_id: ConnectionId,
-    logger: Arc<dyn Logger>,
     context: Arc<ServerContext>,
 }
 
 impl<H: NetworkHandler> TcpClient<H> {
     pub fn connect(addr: SocketAddr, handler: H) -> Result<Self> {
-        Self::connect_with_logger(addr, handler, Arc::new(NoOpLogger))
-    }
-
-    pub fn connect_with_logger(
-        addr: SocketAddr,
-        handler: H,
-        logger: Arc<dyn Logger>,
-    ) -> Result<Self> {
         let stream = TcpStream::connect(addr)?;
 
         Ok(Self {
@@ -584,7 +573,6 @@ impl<H: NetworkHandler> TcpClient<H> {
             handler: Arc::new(handler),
             buffer_pool: ObjectPool::new(5, || vec![0; 8192]),
             conn_id: ConnectionId::new(1),
-            logger,
             context: Arc::new(ServerContext {
                 server: Weak::<TcpClient<H>>::new(),
                 event_loop: Weak::new(),
@@ -601,7 +589,6 @@ impl<H: NetworkHandler> TcpClient<H> {
             stream: self.stream.clone(),
             handler: self.handler.clone(),
             buffer_pool: self.buffer_pool.clone(),
-            logger: self.logger.clone(),
             event_loop: Arc::downgrade(event_loop),
             context: self.context.clone(),
         };
@@ -675,7 +662,6 @@ struct TcpClientHandler<H: NetworkHandler> {
     stream: Arc<Mutex<Option<TcpStream>>>,
     handler: Arc<H>,
     buffer_pool: ObjectPool<Vec<u8>>,
-    logger: Arc<dyn Logger>,
     event_loop: Weak<EventLoop>,
     context: Arc<ServerContext>,
 }
@@ -687,9 +673,10 @@ impl<H: NetworkHandler> EventHandler for TcpClientHandler<H> {
         }
         if event.is_writable() {
             if let Err(e) = self.handler.on_writable(&self.context, self.conn_id) {
-                self.logger.log(
-                    LogLevel::Error,
-                    &format!("Handler on_writable error: {}", e),
+                self.handler.on_error(
+                    &self.context,
+                    Some(self.conn_id),
+                    NetworkError::HandlerError(format!("on_writable: {}", e)),
                 );
             }
         }
@@ -704,9 +691,10 @@ impl<H: NetworkHandler> TcpClientHandler<H> {
             let mut stream_guard = match self.stream.lock() {
                 Ok(s) => s,
                 Err(e) => {
-                    self.logger.log(
-                        LogLevel::Error,
-                        &format!("Client stream mutex poisoned on read: {}", e),
+                    self.handler.on_error(
+                        &self.context,
+                        Some(self.conn_id),
+                        NetworkError::PoisonedLock(format!("Client stream mutex read: {}", e)),
                     );
                     self.disconnect();
                     return;
@@ -722,16 +710,19 @@ impl<H: NetworkHandler> TcpClientHandler<H> {
         match read_result {
             Ok(0) => {
                 // connection closed by server
-                self.logger.log(LogLevel::Info, "Server closed connection");
+                let _ = self.handler.on_event(&self.context, NetworkEvent::ConnectionClosed(self.conn_id));
                 self.disconnect();
             }
             Ok(n) => {
-                if let Err(e) =
-                    self.handler
-                        .on_data(&self.context, self.conn_id, &buffer.as_ref()[..n])
+                if let Err(e) = self
+                    .handler
+                    .on_data(&self.context, self.conn_id, &buffer.as_ref()[..n])
                 {
-                    self.logger
-                        .log(LogLevel::Error, &format!("Handler on_data error: {}", e));
+                    self.handler.on_error(
+                        &self.context,
+                        Some(self.conn_id),
+                        NetworkError::HandlerError(format!("on_data: {}", e)),
+                    );
                     self.disconnect();
                 }
             }
@@ -739,9 +730,7 @@ impl<H: NetworkHandler> TcpClientHandler<H> {
                 // expected for non-blocking I/O
             }
             Err(e) => {
-                self.logger
-                    .log(LogLevel::Error, &format!("Read error: {}", e));
-                self.handler.on_error(&self.context, self.conn_id, e);
+                self.handler.on_error(&self.context, Some(self.conn_id), NetworkError::Io(Box::new(e)));
                 self.disconnect();
             }
         }
@@ -751,24 +740,21 @@ impl<H: NetworkHandler> TcpClientHandler<H> {
         let mut stream_guard = match self.stream.lock() {
             Ok(s) => s,
             Err(e) => {
-                self.logger.log(
-                    LogLevel::Error,
-                    &format!("Client stream mutex poisoned on disconnect: {}", e),
+                self.handler.on_error(
+                    &self.context,
+                    Some(self.conn_id),
+                    NetworkError::PoisonedLock(format!("Client stream mutex disconnect: {}", e)),
                 );
                 e.into_inner()
             }
         };
-        if let Some(stream) = stream_guard.as_mut() {
-            if let Some(event_loop) = self.event_loop.upgrade() {
-                let _ = event_loop.deregister(stream, Token(self.conn_id.as_u64() as usize));
-            }
-        }
         *stream_guard = None;
 
         if let Err(e) = self.handler.on_disconnect(&self.context, self.conn_id) {
-            self.logger.log(
-                LogLevel::Error,
-                &format!("Handler on_disconnect error: {}", e),
+            self.handler.on_error(
+                &self.context,
+                Some(self.conn_id),
+                NetworkError::HandlerError(format!("on_disconnect: {}", e)),
             );
         }
     }

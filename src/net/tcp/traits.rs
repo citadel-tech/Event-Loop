@@ -1,5 +1,5 @@
 use crate::error::Result;
-use std::io::Error;
+use crate::net::errors::{NetworkError, NetworkEvent};
 
 use super::ServerContext;
 
@@ -41,7 +41,13 @@ impl ConnectionId {
 ///
 /// Return errors from handler methods to indicate processing failures. The connection
 /// will be closed automatically when handlers return errors from on_data.
-pub trait NetworkHandler: Send + Sync + Logger + 'static {
+pub trait NetworkHandler: Send + Sync + 'static {
+    /// Called when a non-error network event occurs
+    fn on_event(&self, ctx: &ServerContext, event: NetworkEvent) -> Result<()> {
+        let _ = (ctx, event);
+        Ok(())
+    }
+
     /// Called when connection is established (TCP only)
     fn on_connect(&self, ctx: &ServerContext, conn_id: ConnectionId) -> Result<()> {
         let _ = (ctx, conn_id);
@@ -64,43 +70,7 @@ pub trait NetworkHandler: Send + Sync + Logger + 'static {
     }
 
     /// Called on errors
-    fn on_error(&self, ctx: &ServerContext, conn_id: ConnectionId, error: Error) {
-        let _ = ctx;
-        self.log(
-            LogLevel::Error,
-            &format!("Connection {:?} error: {}", conn_id, error),
-        );
-    }
-}
-
-/// Log levels for network events
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LogLevel {
-    Debug,
-    Info,
-    Warn,
-    Error,
-}
-
-/// Logger trait for network events.
-///
-/// This trait allows library users to integrate their own logging solutions.
-/// NetworkHandler requires Logger implementation so handlers can emit logs
-/// without coupling to specific logging frameworks.
-///
-/// The logger is shared across all connections and must be thread-safe.
-pub trait Logger: Send + Sync {
-    fn log(&self, level: LogLevel, message: &str);
-}
-
-/// Default no-op logger that discards all messages.
-///
-/// Use this when you don't need logging or want to implement your own.
-#[derive(Default, Clone)]
-pub struct NoOpLogger;
-
-impl Logger for NoOpLogger {
-    fn log(&self, _level: LogLevel, _message: &str) {
-        // Do nothing
+    fn on_error(&self, ctx: &ServerContext, conn_id: Option<ConnectionId>, error: NetworkError) {
+        let _ = (ctx, conn_id, error);
     }
 }
