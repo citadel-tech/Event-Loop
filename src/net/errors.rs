@@ -13,6 +13,7 @@ pub enum NetworkError {
     Configuration(String),
     HandlerError(String),
     EventLoopGone,
+    ConnectionNotFound(ConnectionId),
     Other(String),
 }
 
@@ -29,6 +30,9 @@ impl fmt::Display for NetworkError {
             NetworkError::Configuration(msg) => write!(f, "Configuration Error: {}", msg),
             NetworkError::HandlerError(msg) => write!(f, "Handler Error: {}", msg),
             NetworkError::EventLoopGone => write!(f, "EventLoop is gone"),
+            NetworkError::ConnectionNotFound(conn_id) => {
+                write!(f, "Connection not found: {:?}", conn_id)
+            }
             NetworkError::Other(msg) => write!(f, "Error: {}", msg),
         }
     }

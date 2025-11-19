@@ -233,6 +233,8 @@ impl<H: NetworkHandler> ServerOperations for TcpServer<H> {
                 )
             })?;
             stream.write_all(data)?;
+        } else {
+            return Err(Box::new(NetworkError::ConnectionNotFound(conn_id)));
         }
         Ok(())
     }
@@ -717,7 +719,7 @@ impl<H: NetworkHandler> TcpClientHandler<H> {
 
         match read_result {
             Ok(0) => {
-                // connection closed by server
+                // connection closed by remote peer (server)
                 let _ = self
                     .handler
                     .on_event(&self.context, NetworkEvent::ConnectionClosed(self.conn_id));
