@@ -263,8 +263,10 @@ impl<H: NetworkHandler> ServerOperations for TcpServer<H> {
                     NetworkError::HandlerError(format!("on_disconnect: {}", e)),
                 );
             }
-            
-            let _ = self.handler.on_event(&self.context, NetworkEvent::ConnectionClosed(conn_id));
+
+            let _ = self
+                .handler
+                .on_event(&self.context, NetworkEvent::ConnectionClosed(conn_id));
         }
         Ok(())
     }
@@ -345,7 +347,10 @@ impl<H: NetworkHandler> EventHandler for TcpListenerHandler<H> {
                         self.handler.on_error(
                             &self.context,
                             None,
-                            NetworkError::Configuration(format!("Failed to set TCP_NODELAY: {}", e)),
+                            NetworkError::Configuration(format!(
+                                "Failed to set TCP_NODELAY: {}",
+                                e
+                            )),
                         );
                     }
 
@@ -368,11 +373,8 @@ impl<H: NetworkHandler> EventHandler for TcpListenerHandler<H> {
                     let event_loop = if let Some(arc) = self.event_loop.upgrade() {
                         arc
                     } else {
-                        self.handler.on_error(
-                            &self.context,
-                            None,
-                            NetworkError::EventLoopGone,
-                        );
+                        self.handler
+                            .on_error(&self.context, None, NetworkError::EventLoopGone);
                         self.connection_counter.fetch_sub(1, Ordering::SeqCst);
                         // The stream is dropped here, closing the connection.
                         continue;
@@ -385,7 +387,10 @@ impl<H: NetworkHandler> EventHandler for TcpListenerHandler<H> {
                             self.handler.on_error(
                                 &self.context,
                                 Some(conn_id),
-                                NetworkError::PoisonedLock(format!("Stream mutex registration: {}", e)),
+                                NetworkError::PoisonedLock(format!(
+                                    "Stream mutex registration: {}",
+                                    e
+                                )),
                             );
                             continue;
                         }
@@ -398,11 +403,8 @@ impl<H: NetworkHandler> EventHandler for TcpListenerHandler<H> {
                         Interest::READABLE | Interest::WRITABLE,
                         conn_handler,
                     ) {
-                        self.handler.on_error(
-                            &self.context,
-                            Some(conn_id),
-                            NetworkError::Io(e),
-                        );
+                        self.handler
+                            .on_error(&self.context, Some(conn_id), NetworkError::Io(e));
                         self.connection_counter.fetch_sub(1, Ordering::SeqCst);
                         continue;
                     }
@@ -441,7 +443,8 @@ impl<H: NetworkHandler> EventHandler for TcpListenerHandler<H> {
                     break;
                 }
                 Err(e) => {
-                    self.handler.on_error(&self.context, None, NetworkError::Accept(Box::new(e)));
+                    self.handler
+                        .on_error(&self.context, None, NetworkError::Accept(Box::new(e)));
                     break;
                 }
             }
@@ -511,9 +514,9 @@ impl<H: NetworkHandler> TcpConnectionHandler<H> {
                 self.disconnect();
             }
             Ok(n) => {
-                if let Err(e) = self
-                    .handler
-                    .on_data(&self.context, self.conn_id, &buffer.as_ref()[..n])
+                if let Err(e) =
+                    self.handler
+                        .on_data(&self.context, self.conn_id, &buffer.as_ref()[..n])
                 {
                     self.handler.on_error(
                         &self.context,
@@ -527,7 +530,11 @@ impl<H: NetworkHandler> TcpConnectionHandler<H> {
                 // expected for non-blocking I/O
             }
             Err(e) => {
-                self.handler.on_error(&self.context, Some(self.conn_id), NetworkError::Io(Box::new(e)));
+                self.handler.on_error(
+                    &self.context,
+                    Some(self.conn_id),
+                    NetworkError::Io(Box::new(e)),
+                );
                 self.disconnect();
             }
         }
@@ -549,8 +556,10 @@ impl<H: NetworkHandler> TcpConnectionHandler<H> {
                     NetworkError::HandlerError(format!("on_disconnect: {}", e)),
                 );
             }
-            
-            let _ = self.handler.on_event(&self.context, NetworkEvent::ConnectionClosed(self.conn_id));
+
+            let _ = self
+                .handler
+                .on_event(&self.context, NetworkEvent::ConnectionClosed(self.conn_id));
         }
     }
 }
@@ -710,13 +719,15 @@ impl<H: NetworkHandler> TcpClientHandler<H> {
         match read_result {
             Ok(0) => {
                 // connection closed by server
-                let _ = self.handler.on_event(&self.context, NetworkEvent::ConnectionClosed(self.conn_id));
+                let _ = self
+                    .handler
+                    .on_event(&self.context, NetworkEvent::ConnectionClosed(self.conn_id));
                 self.disconnect();
             }
             Ok(n) => {
-                if let Err(e) = self
-                    .handler
-                    .on_data(&self.context, self.conn_id, &buffer.as_ref()[..n])
+                if let Err(e) =
+                    self.handler
+                        .on_data(&self.context, self.conn_id, &buffer.as_ref()[..n])
                 {
                     self.handler.on_error(
                         &self.context,
@@ -730,7 +741,11 @@ impl<H: NetworkHandler> TcpClientHandler<H> {
                 // expected for non-blocking I/O
             }
             Err(e) => {
-                self.handler.on_error(&self.context, Some(self.conn_id), NetworkError::Io(Box::new(e)));
+                self.handler.on_error(
+                    &self.context,
+                    Some(self.conn_id),
+                    NetworkError::Io(Box::new(e)),
+                );
                 self.disconnect();
             }
         }

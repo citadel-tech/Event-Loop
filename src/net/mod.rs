@@ -74,5 +74,5 @@
 //! # }
 //! ```
 
-pub mod tcp;
 pub mod errors;
+pub mod tcp;
