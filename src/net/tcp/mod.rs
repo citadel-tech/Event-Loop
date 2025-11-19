@@ -763,6 +763,13 @@ impl<H: NetworkHandler> TcpClientHandler<H> {
                 e.into_inner()
             }
         };
+
+        if let Some(stream) = stream_guard.as_mut() {
+            if let Some(event_loop) = self.event_loop.upgrade() {
+                let _ = event_loop.deregister(stream, Token(self.conn_id.as_u64() as usize));
+            }
+        }
+        
         *stream_guard = None;
 
         if let Err(e) = self.handler.on_disconnect(&self.context, self.conn_id) {
