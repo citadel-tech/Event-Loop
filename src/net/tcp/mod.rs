@@ -98,14 +98,14 @@ use std::sync::{
 
 /// Context for network handlers to interact with the server.
 pub struct ServerContext {
-    server: Weak<dyn ServerOperations>,
-    event_loop: Weak<EventLoop>,
+    server: Option<Arc<dyn ServerOperations>>,
+    event_loop: Option<Arc<EventLoop>>,
 }
 
 impl ServerContext {
     /// Send data to a specific connection.
     pub fn send_to(&self, conn_id: ConnectionId, data: &[u8]) -> Result<()> {
-        if let Some(server) = self.server.upgrade() {
+        if let Some(server) = &self.server {
             server.send_to(conn_id, data)
         } else {
             Ok(())
@@ -114,7 +114,7 @@ impl ServerContext {
 
     /// Broadcast data to all connections.
     pub fn broadcast(&self, data: &[u8]) -> Result<()> {
-        if let Some(server) = self.server.upgrade() {
+        if let Some(server) = &self.server {
             server.broadcast(data)
         } else {
             Ok(())
@@ -123,9 +123,9 @@ impl ServerContext {
 
     /// Close a specific connection.
     pub fn close_connection(&self, conn_id: ConnectionId) -> Result<()> {
-        if let Some(server) = self.server.upgrade() {
-            if let Some(event_loop) = self.event_loop.upgrade() {
-                server.close_connection(&event_loop, conn_id)
+        if let Some(server) = &self.server {
+            if let Some(event_loop) = &self.event_loop {
+                server.close_connection(event_loop, conn_id)
             } else {
                 Ok(())
             }
@@ -167,8 +167,8 @@ impl<H: NetworkHandler> TcpServer<H> {
             connection_counter: Arc::new(AtomicUsize::new(0)),
             config,
             context: Arc::new(ServerContext {
-                server: Weak::<TcpServer<H>>::new(),
-                event_loop: Weak::new(),
+                server: None,
+                event_loop: None,
             }),
         })
     }
@@ -179,13 +179,10 @@ impl<H: NetworkHandler> TcpServer<H> {
         event_loop: &Arc<EventLoop>,
         listener_token: Token,
     ) -> Result<()> {
-        // `self` is an Arc<TcpServer<H>>, so we can create a weak pointer to it.
-        let server_weak = Arc::downgrade(&self) as Weak<dyn ServerOperations>;
-
         // Update the context with weak references.
         let context_mut = unsafe { &mut *(Arc::as_ptr(&self.context) as *mut ServerContext) };
-        context_mut.server = server_weak;
-        context_mut.event_loop = Arc::downgrade(event_loop);
+        context_mut.server = Some(self.clone());
+        context_mut.event_loop = Some(event_loop.clone());
 
         let listener_handler = TcpListenerHandler {
             listener: self.listener.clone(),
@@ -566,6 +563,7 @@ impl<H: NetworkHandler> TcpConnectionHandler<H> {
 }
 
 /// High-level TCP client
+#[derive(Clone)]
 pub struct TcpClient<H: NetworkHandler> {
     stream: Arc<Mutex<Option<TcpStream>>>,
     handler: Arc<H>,
@@ -584,15 +582,16 @@ impl<H: NetworkHandler> TcpClient<H> {
             buffer_pool: ObjectPool::new(5, || vec![0; 8192]),
             conn_id: ConnectionId::new(1),
             context: Arc::new(ServerContext {
-                server: Weak::<TcpClient<H>>::new(),
-                event_loop: Weak::new(),
+                server: None,
+                event_loop: None,
             }),
         })
     }
 
     pub fn start(&mut self, event_loop: &Arc<EventLoop>, token: Token) -> Result<()> {
         let context_mut = unsafe { &mut *(Arc::as_ptr(&self.context) as *mut ServerContext) };
-        context_mut.event_loop = Arc::downgrade(event_loop);
+        context_mut.event_loop = Some(event_loop.clone());
+        context_mut.server = None;
 
         let handler = TcpClientHandler {
             conn_id: self.conn_id,
