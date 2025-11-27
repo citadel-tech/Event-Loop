@@ -3,7 +3,7 @@ use std::sync::mpmc as channel;
 #[cfg(not(feature = "unstable-mpmc"))]
 use std::sync::mpsc as channel;
 use std::{
-    sync::{Arc, Mutex},
+    sync::atomic::{AtomicUsize, Ordering},
     thread::{Builder, JoinHandle},
 };
 
@@ -20,10 +20,9 @@ enum WorkerMessage {
 
 pub struct ThreadPool {
     workers: Vec<Worker>,
-    sender: channel::Sender<WorkerMessage>,
+    senders: Vec<channel::Sender<WorkerMessage>>,
+    next_worker: AtomicUsize,
 }
-
-type ChannelReceiver = channel::Receiver<WorkerMessage>;
 
 impl Default for ThreadPool {
     fn default() -> Self {
@@ -36,22 +35,29 @@ impl Default for ThreadPool {
 
 impl ThreadPool {
     pub fn new(capacity: usize) -> Self {
-        let (sender, receiver) = channel::channel::<WorkerMessage>();
+        let mut workers = Vec::with_capacity(capacity);
+        let mut senders = Vec::with_capacity(capacity);
 
-        let receiver = Arc::new(Mutex::new(receiver));
+        for id in 0..capacity {
+            let (sender, receiver) = channel::channel::<WorkerMessage>();
+            workers.push(Worker::new(id, receiver));
+            senders.push(sender);
+        }
 
-        let workers: Vec<Worker> = (0..capacity)
-            .map(|id| Worker::new(id, Arc::clone(&receiver)))
-            .collect();
-
-        Self { workers, sender }
+        Self {
+            workers,
+            senders,
+            next_worker: AtomicUsize::new(0),
+        }
     }
 
     pub fn exec<F>(&self, task: F) -> Result<()>
     where
         F: FnOnce() + Send + 'static,
     {
-        Ok(self.sender.send(WorkerMessage::Task(Box::new(task)))?)
+        // Round-robin dispatch
+        let index = self.next_worker.fetch_add(1, Ordering::Relaxed) % self.senders.len();
+        Ok(self.senders[index].send(WorkerMessage::Task(Box::new(task)))?)
     }
 
     pub fn workers_len(&self) -> usize {
@@ -61,14 +67,14 @@ impl ThreadPool {
 
 impl Drop for ThreadPool {
     fn drop(&mut self) {
-        self.workers.iter().for_each(|_| {
-            let _ = self.sender.send(WorkerMessage::Terminate);
-        });
-        self.workers.iter_mut().for_each(|worker| {
+        for sender in &self.senders {
+            let _ = sender.send(WorkerMessage::Terminate);
+        }
+        for worker in &mut self.workers {
             if let Some(t) = worker.take_thread() {
                 t.join().unwrap();
             }
-        });
+        }
     }
 }
 
@@ -79,24 +85,17 @@ struct Worker {
 }
 
 impl Worker {
-    pub fn new(id: usize, receiver: Arc<Mutex<ChannelReceiver>>) -> Self {
+    pub fn new(id: usize, receiver: channel::Receiver<WorkerMessage>) -> Self {
         let thread = Some(
             Builder::new()
                 .name(format!("thread-pool-worker-{id}"))
-                .spawn(move || loop {
-                    let task = {
-                        let receiver = receiver.lock().unwrap();
-                        if let Ok(message) = receiver.recv() {
-                            match message {
-                                WorkerMessage::Task(task) => task,
-                                WorkerMessage::Terminate => break,
-                            }
-                        } else {
-                            break;
+                .spawn(move || {
+                    while let Ok(message) = receiver.recv() {
+                        match message {
+                            WorkerMessage::Task(task) => task(),
+                            WorkerMessage::Terminate => break,
                         }
-                    };
-
-                    task();
+                    }
                 })
                 .expect("Couldn't create the worker thread id={id}"),
         );
@@ -113,6 +112,7 @@ impl Worker {
 mod tests {
     use std::{
         sync::atomic::{AtomicUsize, Ordering},
+        sync::Arc,
         time::Duration,
     };
 
