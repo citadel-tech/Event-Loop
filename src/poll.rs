@@ -12,17 +12,21 @@ type Registry = Arc<Map<Token, HandlerEntry>>;
 
 pub struct PollHandle {
     poller: Arc<RwLock<mio::Poll>>,
+    mio_registry: mio::Registry,
     registery: Registry,
     waker: Arc<mio::Waker>,
 }
 
 impl PollHandle {
     pub fn new() -> Result<Self> {
-        let poller = Arc::new(RwLock::new(Poll::new()?));
-        let waker = mio::Waker::new(poller.read().unwrap().registry(), Token(0))?;
+        let poll = Poll::new()?;
+        let mio_registry = poll.registry().try_clone()?;
+        let waker = mio::Waker::new(&mio_registry, Token(0))?;
+        let poller = Arc::new(RwLock::new(poll));
         let registery: Registry = Arc::new(Map::new());
         Ok(PollHandle {
             poller,
+            mio_registry,
             registery,
             waker: Arc::new(waker),
         })
@@ -41,11 +45,7 @@ impl PollHandle {
     {
         let handler_entry = HandlerEntry::new(handler, interest);
 
-        let poller = self
-            .poller
-            .read()
-            .map_err(|_| "Failed to acquire poller read lock")?;
-        src.register(poller.registry(), token, interest)?;
+        src.register(&self.mio_registry, token, interest)?;
 
         self.registery.insert(token, handler_entry);
         Ok(())
@@ -55,11 +55,7 @@ impl PollHandle {
     where
         S: mio::event::Source + ?Sized,
     {
-        let poller = self
-            .poller
-            .read()
-            .map_err(|_| "Failed to acquire poller read lock")?;
-        poller.registry().deregister(source)?;
+        self.mio_registry.deregister(source)?;
 
         self.registery.remove(&token);
 
