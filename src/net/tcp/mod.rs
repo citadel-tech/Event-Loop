@@ -93,19 +93,19 @@ use std::io::{Read, Write};
 use std::net::SocketAddr;
 use std::sync::{
     atomic::{AtomicU64, AtomicUsize, Ordering},
-    Arc, Mutex, Weak,
+    Arc, Mutex, RwLock, Weak,
 };
 
 /// Context for network handlers to interact with the server.
 pub struct ServerContext {
-    server: Option<Arc<dyn ServerOperations>>,
-    event_loop: Option<Arc<EventLoop>>,
+    server: RwLock<Option<Arc<dyn ServerOperations>>>,
+    event_loop: RwLock<Option<Arc<EventLoop>>>,
 }
 
 impl ServerContext {
     /// Send data to a specific connection.
     pub fn send_to(&self, conn_id: ConnectionId, data: &[u8]) -> Result<()> {
-        if let Some(server) = &self.server {
+        if let Some(server) = self.server.read().unwrap().as_ref() {
             server.send_to(conn_id, data)
         } else {
             Ok(())
@@ -114,7 +114,7 @@ impl ServerContext {
 
     /// Broadcast data to all connections.
     pub fn broadcast(&self, data: &[u8]) -> Result<()> {
-        if let Some(server) = &self.server {
+        if let Some(server) = self.server.read().unwrap().as_ref() {
             server.broadcast(data)
         } else {
             Ok(())
@@ -123,8 +123,9 @@ impl ServerContext {
 
     /// Close a specific connection.
     pub fn close_connection(&self, conn_id: ConnectionId) -> Result<()> {
-        if let Some(server) = &self.server {
-            if let Some(event_loop) = &self.event_loop {
+        let server_guard = self.server.read().unwrap();
+        if let Some(server) = server_guard.as_ref() {
+            if let Some(event_loop) = self.event_loop.read().unwrap().as_ref() {
                 server.close_connection(event_loop, conn_id)
             } else {
                 Ok(())
@@ -167,8 +168,8 @@ impl<H: NetworkHandler> TcpServer<H> {
             connection_counter: Arc::new(AtomicUsize::new(0)),
             config,
             context: Arc::new(ServerContext {
-                server: None,
-                event_loop: None,
+                server: RwLock::new(None),
+                event_loop: RwLock::new(None),
             }),
         })
     }
@@ -179,10 +180,9 @@ impl<H: NetworkHandler> TcpServer<H> {
         event_loop: &Arc<EventLoop>,
         listener_token: Token,
     ) -> Result<()> {
-        // Update the context with weak references.
-        let context_mut = unsafe { &mut *(Arc::as_ptr(&self.context) as *mut ServerContext) };
-        context_mut.server = Some(self.clone());
-        context_mut.event_loop = Some(event_loop.clone());
+        // Update the context.
+        *self.context.server.write().unwrap() = Some(self.clone());
+        *self.context.event_loop.write().unwrap() = Some(event_loop.clone());
 
         let listener_handler = TcpListenerHandler {
             listener: self.listener.clone(),
@@ -328,13 +328,34 @@ impl<H: NetworkHandler> EventHandler for TcpListenerHandler<H> {
                 Ok((stream, peer_addr)) => {
                     // Atomically check and increment the connection count.
                     if let Some(max) = self.config.max_connections {
-                        if self.connection_counter.fetch_add(1, Ordering::SeqCst) >= max {
-                            self.connection_counter.fetch_sub(1, Ordering::SeqCst); // Revert if limit exceeded
-                            self.handler.on_error(
-                                &self.context,
-                                None,
-                                NetworkError::MaxConnectionsReached(peer_addr),
-                            );
+                        let mut accepted = false;
+                        loop {
+                            let current = self.connection_counter.load(Ordering::SeqCst);
+                            if current >= max {
+                                self.handler.on_error(
+                                    &self.context,
+                                    None,
+                                    NetworkError::MaxConnectionsReached(peer_addr),
+                                );
+                                break;
+                            }
+                            match self.connection_counter.compare_exchange(
+                                current,
+                                current + 1,
+                                Ordering::SeqCst,
+                                Ordering::SeqCst,
+                            ) {
+                                Ok(_) => {
+                                    accepted = true;
+                                    break;
+                                }
+                                Err(_) => {
+                                    // try again if the value changed.
+                                    continue;
+                                }
+                            }
+                        }
+                        if !accepted {
                             continue;
                         }
                     } else {
@@ -390,6 +411,7 @@ impl<H: NetworkHandler> EventHandler for TcpListenerHandler<H> {
                                     e
                                 )),
                             );
+                            self.connection_counter.fetch_sub(1, Ordering::SeqCst);
                             continue;
                         }
                     };
@@ -582,16 +604,15 @@ impl<H: NetworkHandler> TcpClient<H> {
             buffer_pool: ObjectPool::new(5, || vec![0; 8192]),
             conn_id: ConnectionId::new(1),
             context: Arc::new(ServerContext {
-                server: None,
-                event_loop: None,
+                server: RwLock::new(None),
+                event_loop: RwLock::new(None),
             }),
         })
     }
 
     pub fn start(&mut self, event_loop: &Arc<EventLoop>, token: Token) -> Result<()> {
-        let context_mut = unsafe { &mut *(Arc::as_ptr(&self.context) as *mut ServerContext) };
-        context_mut.event_loop = Some(event_loop.clone());
-        context_mut.server = None;
+        *self.context.event_loop.write().unwrap() = Some(event_loop.clone());
+        *self.context.server.write().unwrap() = None;
 
         let handler = TcpClientHandler {
             conn_id: self.conn_id,
