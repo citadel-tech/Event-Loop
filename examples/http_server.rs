@@ -137,7 +137,6 @@ impl HttpRequest {
 
 pub struct HttpServer {
     listener: Arc<Mutex<TcpListener>>,
-    connections: Arc<Mutex<HashMap<Token, TcpStream>>>,
     buffer_pool: ObjectPool<Vec<u8>>,
 }
 
@@ -145,7 +144,6 @@ impl HttpServer {
     pub fn new(listener: Arc<Mutex<TcpListener>>) -> Self {
         Self {
             listener,
-            connections: Arc::new(Mutex::new(HashMap::new())),
             buffer_pool: ObjectPool::new(20, || vec![0; 8192]),
         }
     }
@@ -153,19 +151,18 @@ impl HttpServer {
     fn accept_connections(&self) -> Result<()> {
         loop {
             match self.listener.lock().unwrap().accept() {
-                Ok((mut stream, addr)) => {
+                Ok((stream, addr)) => {
                     println!("New connection from: {}", addr);
 
                     let token = next_token_lock().write()?.generate();
+                    let stream = Arc::new(Mutex::new(stream));
 
                     event_loop().register(
-                        &mut stream,
+                        &mut *stream.lock().unwrap(),
                         token,
                         Interest::READABLE,
-                        HttpClient::new(token, self.connections.clone(), self.buffer_pool.clone()),
+                        HttpClient::new(token, stream.clone(), self.buffer_pool.clone()),
                     )?;
-
-                    self.connections.lock().unwrap().insert(token, stream);
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     // No more pending connections
@@ -190,19 +187,15 @@ impl EventHandler for HttpServer {
 
 pub struct HttpClient {
     token: Token,
-    connections: Arc<Mutex<HashMap<Token, TcpStream>>>,
+    stream: Arc<Mutex<TcpStream>>,
     buffer_pool: ObjectPool<Vec<u8>>,
 }
 
 impl HttpClient {
-    fn new(
-        token: Token,
-        connections: Arc<Mutex<HashMap<Token, TcpStream>>>,
-        buffer_pool: ObjectPool<Vec<u8>>,
-    ) -> Self {
+    fn new(token: Token, stream: Arc<Mutex<TcpStream>>, buffer_pool: ObjectPool<Vec<u8>>) -> Self {
         Self {
             token,
-            connections,
+            stream,
             buffer_pool,
         }
     }
@@ -213,7 +206,6 @@ impl HttpClient {
                 "[INFO] Received request: method={}, path={}, headers={:?}",
                 request.method, request.path, request.headers
             );
-
             match (request.method.as_str(), request.path.as_str()) {
                 ("GET", "/") => HttpResponse::ok(
                     "<h1>Welcome to Mill-IO HTTP Server!</h1><p>A simple HTTP server built with the mill-io event loop.</p>",
@@ -233,11 +225,9 @@ impl HttpClient {
 
     fn disconnect(&self) {
         println!("Client disconnected: {:?}", self.token);
-        if let Ok(mut connections) = self.connections.lock() {
-            if let Some(mut stream) = connections.remove(&self.token) {
-                if let Err(e) = event_loop().deregister(&mut stream, self.token) {
-                    eprintln!("Failed to deregister client {:?}: {}", self.token, e);
-                }
+        if let Ok(mut stream) = self.stream.lock() {
+            if let Err(e) = event_loop().deregister(&mut *stream, self.token) {
+                eprintln!("Failed to deregister client {:?}: {}", self.token, e);
             }
         }
     }
@@ -249,14 +239,9 @@ impl EventHandler for HttpClient {
             return;
         }
 
-        let mut connections = match self.connections.lock() {
-            Ok(conn) => conn,
+        let mut stream = match self.stream.lock() {
+            Ok(s) => s,
             Err(_) => return,
-        };
-
-        let stream = match connections.get_mut(&self.token) {
-            Some(s) => s,
-            None => return,
         };
 
         let mut buffer: PooledObject<Vec<u8>> = self.buffer_pool.acquire();
@@ -264,7 +249,7 @@ impl EventHandler for HttpClient {
         match stream.read(buffer.as_mut()) {
             Ok(0) => {
                 // Client closed connection
-                drop(connections); // Release lock before calling disconnect
+                drop(stream); // Release lock before calling disconnect
                 self.disconnect();
             }
             Ok(bytes_read) => {
@@ -274,7 +259,7 @@ impl EventHandler for HttpClient {
 
                 if let Err(e) = stream.write_all(&response_bytes) {
                     eprintln!("Error writing response to client {:?}: {}", self.token, e);
-                    drop(connections);
+                    drop(stream);
                     self.disconnect();
                 }
             }
@@ -283,7 +268,7 @@ impl EventHandler for HttpClient {
             }
             Err(e) => {
                 eprintln!("Error reading from client {:?}: {}", self.token, e);
-                drop(connections);
+                drop(stream);
                 self.disconnect();
             }
         }
