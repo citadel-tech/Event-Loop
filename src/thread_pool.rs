@@ -5,11 +5,13 @@ use std::sync::mpsc as channel;
 use std::{
     cmp::Ordering as CmpOrdering,
     collections::BinaryHeap,
+    panic::{catch_unwind, AssertUnwindSafe},
     sync::{
         atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
         Arc, Barrier, Condvar, Mutex,
     },
     thread::{Builder, JoinHandle},
+    time::Instant,
 };
 
 use crate::error::Result;
@@ -121,6 +123,20 @@ pub enum TaskPriority {
     Critical = 3,
 }
 
+#[derive(Debug, Default)]
+pub struct ComputePoolMetrics {
+    pub tasks_submitted: AtomicU64,
+    pub tasks_completed: AtomicU64,
+    pub tasks_failed: AtomicU64,
+    pub active_workers: AtomicUsize,
+    pub queue_depth_low: AtomicUsize,
+    pub queue_depth_normal: AtomicUsize,
+    pub queue_depth_high: AtomicUsize,
+    pub queue_depth_critical: AtomicUsize,
+    pub total_execution_time_ns: AtomicU64,
+}
+
+
 struct PriorityTask {
     task: Task,
     priority: TaskPriority,
@@ -160,6 +176,7 @@ pub struct ComputeThreadPool {
     workers: Vec<JoinHandle<()>>,
     state: Arc<ComputeSharedState>,
     sequence: AtomicU64,
+    metrics: Arc<ComputePoolMetrics>,
 }
 
 impl Default for ComputeThreadPool {
@@ -178,6 +195,7 @@ impl ComputeThreadPool {
             condvar: Condvar::new(),
             shutdown: AtomicBool::new(false),
         });
+        let metrics = Arc::new(ComputePoolMetrics::default());
 
         let mut workers = Vec::with_capacity(capacity);
         // barrier to ensure all workers are started before returning
@@ -186,6 +204,7 @@ impl ComputeThreadPool {
         for id in 0..capacity {
             let state_clone = Arc::clone(&state);
             let barrier_clone = Arc::clone(&barrier);
+            let metrics_clone = Arc::clone(&metrics);
             let thread = Builder::new()
                 .name(format!("compute-worker-{id}"))
                 .spawn(move || {
@@ -205,11 +224,33 @@ impl ComputeThreadPool {
                                 break;
                             }
 
-                            queue.pop()
+                            let t = queue.pop();
+                            if let Some(ref pt) = t {
+                                match pt.priority {
+                                    TaskPriority::Low => metrics_clone.queue_depth_low.fetch_sub(1, Ordering::Relaxed),
+                                    TaskPriority::Normal => metrics_clone.queue_depth_normal.fetch_sub(1, Ordering::Relaxed),
+                                    TaskPriority::High => metrics_clone.queue_depth_high.fetch_sub(1, Ordering::Relaxed),
+                                    TaskPriority::Critical => metrics_clone.queue_depth_critical.fetch_sub(1, Ordering::Relaxed),
+                                };
+                            }
+                            t
                         };
 
                         if let Some(priority_task) = task {
-                            (priority_task.task)();
+                            metrics_clone.active_workers.fetch_add(1, Ordering::Relaxed);
+                            let start = Instant::now();
+
+                            let result = catch_unwind(AssertUnwindSafe(|| (priority_task.task)()));
+
+                            let duration = start.elapsed();
+                            metrics_clone.total_execution_time_ns.fetch_add(duration.as_nanos() as u64, Ordering::Relaxed);
+                            metrics_clone.active_workers.fetch_sub(1, Ordering::Relaxed);
+
+                            if result.is_ok() {
+                                metrics_clone.tasks_completed.fetch_add(1, Ordering::Relaxed);
+                            } else {
+                                metrics_clone.tasks_failed.fetch_add(1, Ordering::Relaxed);
+                            }
                         }
                     }
                 })
@@ -224,6 +265,7 @@ impl ComputeThreadPool {
             workers,
             state,
             sequence: AtomicU64::new(0),
+            metrics,
         }
     }
 
@@ -238,9 +280,21 @@ impl ComputeThreadPool {
             sequence,
         };
 
+        self.metrics.tasks_submitted.fetch_add(1, Ordering::Relaxed);
+        match priority {
+            TaskPriority::Low => self.metrics.queue_depth_low.fetch_add(1, Ordering::Relaxed),
+            TaskPriority::Normal => self.metrics.queue_depth_normal.fetch_add(1, Ordering::Relaxed),
+            TaskPriority::High => self.metrics.queue_depth_high.fetch_add(1, Ordering::Relaxed),
+            TaskPriority::Critical => self.metrics.queue_depth_critical.fetch_add(1, Ordering::Relaxed),
+        };
+
         let mut queue = self.state.queue.lock().unwrap();
         queue.push(priority_task);
         self.state.condvar.notify_one();
+    }
+
+    pub fn metrics(&self) -> Arc<ComputePoolMetrics> {
+        self.metrics.clone()
     }
 }
 
