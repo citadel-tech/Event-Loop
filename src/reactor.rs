@@ -1,4 +1,8 @@
-use crate::{error::Result, poll::PollHandle, thread_pool::ThreadPool};
+use crate::{
+    error::Result,
+    poll::PollHandle,
+    thread_pool::{ComputeThreadPool, TaskPriority, ThreadPool},
+};
 use mio::{event::Event, Events};
 use std::{
     sync::{
@@ -15,6 +19,7 @@ pub struct Reactor {
     pub(crate) poll_handle: PollHandle,
     events: Arc<RwLock<Events>>,
     pool: ThreadPool,
+    compute_pool: ComputeThreadPool,
     running: AtomicBool,
     poll_timeout_ms: u64,
 }
@@ -25,6 +30,11 @@ impl Default for Reactor {
             poll_handle: PollHandle::new().unwrap(),
             events: Arc::new(RwLock::new(Events::with_capacity(DEFAULT_EVENTS_CAPACITY))),
             pool: ThreadPool::default(),
+            compute_pool: ComputeThreadPool::new(
+                std::thread::available_parallelism()
+                    .map(|n| n.get())
+                    .unwrap_or(4),
+            ),
             running: AtomicBool::new(false),
             poll_timeout_ms: DEFAULT_POLL_TIMEOUT_MS,
         }
@@ -37,6 +47,7 @@ impl Reactor {
             poll_handle: PollHandle::new()?,
             events: Arc::new(RwLock::new(Events::with_capacity(events_capacity))),
             pool: ThreadPool::new(pool_size),
+            compute_pool: ComputeThreadPool::default(),
             running: AtomicBool::new(false),
             poll_timeout_ms,
         })
@@ -84,6 +95,13 @@ impl Reactor {
                 }
             }
         })
+    }
+
+    pub fn spawn_compute<F>(&self, task: F, priority: TaskPriority)
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        self.compute_pool.spawn(task, priority);
     }
 
     pub fn get_events(&self) -> Arc<RwLock<Events>> {

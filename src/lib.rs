@@ -105,6 +105,7 @@ pub mod thread_pool;
 pub use handler::EventHandler;
 pub use mio::event::Event;
 pub use object_pool::{ObjectPool, PooledObject};
+pub use thread_pool::TaskPriority;
 
 use crate::error::Result;
 
@@ -125,7 +126,7 @@ pub mod prelude {
     pub use crate::handler::EventHandler;
     pub use crate::object_pool::{ObjectPool, PooledObject};
     pub use crate::reactor::{self, Reactor};
-    pub use crate::thread_pool::{self, ThreadPool};
+    pub use crate::thread_pool::{self, TaskPriority, ThreadPool};
 }
 
 /// The main event loop structure for registering I/O sources and handling events.
@@ -368,6 +369,58 @@ impl EventLoop {
     /// ```
     pub fn run(&self) -> Result<()> {
         self.reactor.run()
+    }
+
+    /// Submits a CPU-intensive task to the compute thread pool with default (Normal) priority.
+    ///
+    /// This method allows offloading heavy computations (e.g., cryptography, image processing)
+    /// to a dedicated thread pool, preventing the I/O event loop from being blocked.
+    ///
+    /// ## Arguments
+    /// * `task` - The closure to execute
+    ///
+    /// ## Example
+    ///
+    /// ```rust,no_run
+    /// use mill_io::EventLoop;
+    ///
+    /// let event_loop = EventLoop::default();
+    ///
+    /// event_loop.spawn_compute(|| {
+    ///     // Heavy computation here
+    ///     let result = 2 + 2;
+    ///     println!("Computed: {}", result);
+    /// });
+    /// ```
+    pub fn spawn_compute<F>(&self, task: F)
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        self.reactor.spawn_compute(task, TaskPriority::Normal);
+    }
+
+    /// Submits a CPU-intensive task to the compute thread pool with a specific priority.
+    ///
+    /// ## Arguments
+    /// * `task` - The closure to execute
+    /// * `priority` - The priority of the task
+    ///
+    /// ## Example
+    ///
+    /// ```rust,no_run
+    /// use mill_io::{EventLoop, TaskPriority};
+    ///
+    /// let event_loop = EventLoop::default();
+    ///
+    /// event_loop.spawn_compute_with_priority(|| {
+    ///     // Heavy computation here
+    /// }, TaskPriority::High);
+    /// ```
+    pub fn spawn_compute_with_priority<F>(&self, task: F, priority: TaskPriority)
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        self.reactor.spawn_compute(task, priority);
     }
 
     /// Signals the event loop to stop gracefully.
