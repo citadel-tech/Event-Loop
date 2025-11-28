@@ -3,7 +3,12 @@ use std::sync::mpmc as channel;
 #[cfg(not(feature = "unstable-mpmc"))]
 use std::sync::mpsc as channel;
 use std::{
-    sync::atomic::{AtomicUsize, Ordering},
+    cmp::Ordering as CmpOrdering,
+    collections::BinaryHeap,
+    sync::{
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+        Arc, Barrier, Condvar, Mutex,
+    },
     thread::{Builder, JoinHandle},
 };
 
@@ -11,7 +16,7 @@ use crate::error::Result;
 
 pub const DEFAULT_POOL_CAPACITY: usize = 4;
 
-type Task = Box<dyn FnOnce() + Send + 'static>;
+pub type Task = Box<dyn FnOnce() + Send + 'static>;
 
 enum WorkerMessage {
     Task(Task),
@@ -105,6 +110,139 @@ impl Worker {
 
     pub fn take_thread(&mut self) -> Option<JoinHandle<()>> {
         self.thread.take()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum TaskPriority {
+    Low = 0,
+    Normal = 1,
+    High = 2,
+    Critical = 3,
+}
+
+struct PriorityTask {
+    task: Task,
+    priority: TaskPriority,
+    sequence: u64,
+}
+
+impl PartialEq for PriorityTask {
+    fn eq(&self, other: &Self) -> bool {
+        self.priority == other.priority && self.sequence == other.sequence
+    }
+}
+
+impl Eq for PriorityTask {}
+
+impl PartialOrd for PriorityTask {
+    fn partial_cmp(&self, other: &Self) -> Option<CmpOrdering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for PriorityTask {
+    fn cmp(&self, other: &Self) -> CmpOrdering {
+        match self.priority.cmp(&other.priority) {
+            CmpOrdering::Equal => other.sequence.cmp(&self.sequence),
+            ord => ord,
+        }
+    }
+}
+
+struct ComputeSharedState {
+    queue: Mutex<BinaryHeap<PriorityTask>>,
+    condvar: Condvar,
+    shutdown: AtomicBool,
+}
+
+pub struct ComputeThreadPool {
+    workers: Vec<JoinHandle<()>>,
+    state: Arc<ComputeSharedState>,
+    sequence: AtomicU64,
+}
+
+impl ComputeThreadPool {
+    pub fn new(capacity: usize) -> Self {
+        let state = Arc::new(ComputeSharedState {
+            queue: Mutex::new(BinaryHeap::new()),
+            condvar: Condvar::new(),
+            shutdown: AtomicBool::new(false),
+        });
+
+        let mut workers = Vec::with_capacity(capacity);
+        // barrier to ensure all workers are started before returning
+        let barrier = Arc::new(Barrier::new(capacity + 1));
+
+        for id in 0..capacity {
+            let state_clone = Arc::clone(&state);
+            let barrier_clone = Arc::clone(&barrier);
+            let thread = Builder::new()
+                .name(format!("compute-worker-{id}"))
+                .spawn(move || {
+                    // wait for all workers to be ready
+                    barrier_clone.wait();
+
+                    loop {
+                        let task = {
+                            let mut queue = state_clone.queue.lock().unwrap();
+
+                            while queue.is_empty() && !state_clone.shutdown.load(Ordering::Relaxed)
+                            {
+                                queue = state_clone.condvar.wait(queue).unwrap();
+                            }
+
+                            if state_clone.shutdown.load(Ordering::Relaxed) && queue.is_empty() {
+                                break;
+                            }
+
+                            queue.pop()
+                        };
+
+                        if let Some(priority_task) = task {
+                            (priority_task.task)();
+                        }
+                    }
+                })
+                .expect("Failed to create compute worker thread");
+            workers.push(thread);
+        }
+
+        // wait for all workers to start
+        barrier.wait();
+
+        Self {
+            workers,
+            state,
+            sequence: AtomicU64::new(0),
+        }
+    }
+
+    pub fn spawn<F>(&self, task: F, priority: TaskPriority)
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        let sequence = self.sequence.fetch_add(1, Ordering::Relaxed);
+        let priority_task = PriorityTask {
+            task: Box::new(task),
+            priority,
+            sequence,
+        };
+
+        let mut queue = self.state.queue.lock().unwrap();
+        queue.push(priority_task);
+        self.state.condvar.notify_one();
+    }
+}
+
+impl Drop for ComputeThreadPool {
+    fn drop(&mut self) {
+        self.state.shutdown.store(true, Ordering::SeqCst);
+        self.state.condvar.notify_all();
+
+        for worker in self.workers.drain(..) {
+            let _ = worker.join();
+        }
     }
 }
 
