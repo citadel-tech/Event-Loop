@@ -174,6 +174,17 @@ impl<H: NetworkHandler> TcpServer<H> {
         })
     }
 
+    /// Get the local address the server is bound to
+    pub fn local_addr(&self) -> Result<SocketAddr> {
+        let listener = self.listener.lock().map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::Other,
+                format!("Listener mutex poisoned: {}", e),
+            )
+        })?;
+        Ok(listener.local_addr()?)
+    }
+
     /// Start the server by registering with the event loop
     pub fn start(
         self: Arc<Self>,
@@ -800,5 +811,145 @@ impl<H: NetworkHandler> TcpClientHandler<H> {
                 NetworkError::HandlerError(format!("on_disconnect: {}", e)),
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::EventLoop;
+    use std::sync::{Arc, Condvar, Mutex};
+    use std::thread;
+    use std::time::Duration;
+
+    struct TestHandler {
+        on_connect_cb: Option<Box<dyn Fn() + Send + Sync>>,
+        #[allow(clippy::type_complexity)]
+        on_data_cb: Option<Box<dyn Fn(&ServerContext, ConnectionId, &[u8]) + Send + Sync>>,
+    }
+
+    impl TestHandler {
+        fn new() -> Self {
+            Self {
+                on_connect_cb: None,
+                on_data_cb: None,
+            }
+        }
+
+        fn with_on_connect<F>(mut self, f: F) -> Self
+        where
+            F: Fn() + Send + Sync + 'static,
+        {
+            self.on_connect_cb = Some(Box::new(f));
+            self
+        }
+
+        fn with_on_data<F>(mut self, f: F) -> Self
+        where
+            F: Fn(&ServerContext, ConnectionId, &[u8]) + Send + Sync + 'static,
+        {
+            self.on_data_cb = Some(Box::new(f));
+            self
+        }
+    }
+
+    impl NetworkHandler for TestHandler {
+        fn on_connect(&self, _ctx: &ServerContext, _conn_id: ConnectionId) -> Result<()> {
+            if let Some(cb) = &self.on_connect_cb {
+                cb();
+            }
+            Ok(())
+        }
+
+        fn on_data(&self, ctx: &ServerContext, conn_id: ConnectionId, data: &[u8]) -> Result<()> {
+            if let Some(cb) = &self.on_data_cb {
+                cb(ctx, conn_id, data);
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_tcp_server_client_echo() {
+        let event_loop = Arc::new(EventLoop::new(2, 1024, 100).unwrap());
+
+        // synchronization primitives
+        let server_connected = Arc::new((Mutex::new(false), Condvar::new()));
+        let client_received = Arc::new((Mutex::new(false), Condvar::new()));
+        let received_data = Arc::new(Mutex::new(Vec::new()));
+
+        // server handler
+        let sc = server_connected.clone();
+        let server_handler = TestHandler::new()
+            .with_on_connect(move || {
+                let (lock, cvar) = &*sc;
+                let mut started = lock.lock().unwrap();
+                *started = true;
+                cvar.notify_all();
+            })
+            .with_on_data(|ctx, conn_id, data| {
+                ctx.send_to(conn_id, data).unwrap();
+            });
+
+        // setup server
+        let config = TcpServerConfig::builder()
+            .address("127.0.0.1:0".parse().unwrap())
+            .build();
+        let server = Arc::new(TcpServer::new(config, server_handler).unwrap());
+        let server_addr = server.local_addr().unwrap();
+
+        server.clone().start(&event_loop, Token(1)).unwrap();
+
+        // client handler
+        let cr = client_received.clone();
+        let rd = received_data.clone();
+        let client_handler = TestHandler::new().with_on_data(move |_, _, data| {
+            let mut r_data = rd.lock().unwrap();
+            r_data.extend_from_slice(data);
+            let (lock, cvar) = &*cr;
+            let mut received = lock.lock().unwrap();
+            *received = true;
+            cvar.notify_all();
+        });
+
+        let mut client = TcpClient::connect(server_addr, client_handler).unwrap();
+        client.start(&event_loop, Token(2)).unwrap();
+
+        let el_clone = event_loop.clone();
+        thread::spawn(move || {
+            el_clone.run().unwrap();
+        });
+
+        {
+            let (lock, cvar) = &*server_connected;
+            let mut started = lock.lock().unwrap();
+            while !*started {
+                let result = cvar.wait_timeout(started, Duration::from_secs(2)).unwrap();
+                if result.1.timed_out() {
+                    panic!("Server did not accept connection in time");
+                }
+                started = result.0;
+            }
+        }
+
+        let msg = b"Hello, World!";
+        client.send(msg).unwrap();
+
+        {
+            let (lock, cvar) = &*client_received;
+            let mut received = lock.lock().unwrap();
+            while !*received {
+                let result = cvar.wait_timeout(received, Duration::from_secs(2)).unwrap();
+                if result.1.timed_out() {
+                    panic!("Client did not receive data in time");
+                }
+                received = result.0;
+            }
+        }
+
+        let data = received_data.lock().unwrap();
+        assert_eq!(*data, msg);
+
+        event_loop.stop();
     }
 }
