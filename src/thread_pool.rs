@@ -250,7 +250,7 @@ impl Drop for ComputeThreadPool {
 mod tests {
     use std::{
         sync::atomic::{AtomicUsize, Ordering},
-        sync::Arc,
+        sync::{Arc, Barrier, Mutex},
         time::Duration,
     };
 
@@ -308,5 +308,61 @@ mod tests {
         }
 
         assert_eq!(counter.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn test_compute_pool_priority() {
+        let pool = ComputeThreadPool::new(1); // Single thread to ensure order execution
+        let result = Arc::new(Mutex::new(Vec::new()));
+
+        // use a barrier to ensure the first task is running and blocking the worker
+        let barrier = Arc::new(Barrier::new(2));
+        let b_clone = barrier.clone();
+
+        let r1 = result.clone();
+        pool.spawn(
+            move || {
+                b_clone.wait(); // signal that we started
+                std::thread::sleep(Duration::from_millis(50)); // block worker
+                r1.lock().unwrap().push(1);
+            },
+            TaskPriority::Low,
+        );
+
+        // wait for Task 1 to start
+        barrier.wait();
+
+        // these should be queued while the first one runs
+        let r2 = result.clone();
+        pool.spawn(
+            move || {
+                r2.lock().unwrap().push(2);
+            },
+            TaskPriority::Low,
+        );
+
+        let r3 = result.clone();
+        pool.spawn(
+            move || {
+                r3.lock().unwrap().push(3);
+            },
+            TaskPriority::High,
+        );
+
+        let r4 = result.clone();
+        pool.spawn(
+            move || {
+                r4.lock().unwrap().push(4);
+            },
+            TaskPriority::Normal,
+        );
+
+        // wait for tasks to finish
+        std::thread::sleep(Duration::from_millis(200));
+
+        let res = result.lock().unwrap();
+        // 1 runs first (started immediately).
+        // Then 3 (High), 4 (Normal), 2 (Low).
+        assert_eq!(*res, vec![1, 3, 4, 2]);
     }
 }
