@@ -465,4 +465,67 @@ mod tests {
         // Then 3 (High), 4 (Normal), 2 (Low).
         assert_eq!(*res, vec![1, 3, 4, 2]);
     }
+
+    #[test]
+    fn test_compute_pool_metrics() {
+        let pool = ComputeThreadPool::new(2);
+        let metrics = pool.metrics();
+
+        let barrier = Arc::new(Barrier::new(3)); // 2 workers + main thread
+        let barrier_clone = barrier.clone();
+
+        // Task 1: Occupy worker 1
+        pool.spawn(
+            move || {
+                barrier_clone.wait(); // wait for main thread to check metrics
+            },
+            TaskPriority::Normal,
+        );
+
+        let barrier_clone2 = barrier.clone();
+        // Task 2: Occupy worker 2
+        pool.spawn(
+            move || {
+                barrier_clone2.wait(); // wait for main thread to check metrics
+            },
+            TaskPriority::Normal,
+        );
+
+        // wait a bit for workers to pick up tasks
+        std::thread::sleep(Duration::from_millis(50));
+
+        // Task 3: Queue (Low)
+        pool.spawn(|| {}, TaskPriority::Low);
+
+        // Task 4: Queue (High)
+        pool.spawn(|| {}, TaskPriority::High);
+
+        // check intermediate metrics
+        assert_eq!(metrics.tasks_submitted(), 4);
+        // both workers should be busy
+        assert_eq!(metrics.active_workers(), 2);
+        // queued tasks
+        assert_eq!(metrics.queue_depth_low(), 1);
+        assert_eq!(metrics.queue_depth_high(), 1);
+        // running tasks are popped, so normal queue depth is 0
+        assert_eq!(metrics.queue_depth_normal(), 0);
+
+        barrier.wait();
+
+        // wait for completion
+        let start = std::time::Instant::now();
+        while metrics.tasks_completed() < 4 {
+            if start.elapsed() > Duration::from_secs(2) {
+                panic!("Timed out waiting for tasks to complete");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        // check final metrics
+        assert_eq!(metrics.tasks_completed(), 4);
+        assert_eq!(metrics.active_workers(), 0);
+        assert_eq!(metrics.queue_depth_low(), 0);
+        assert_eq!(metrics.queue_depth_high(), 0);
+        assert!(metrics.total_execution_time_ns() > 0);
+    }
 }
