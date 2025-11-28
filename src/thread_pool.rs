@@ -136,6 +136,43 @@ pub struct ComputePoolMetrics {
     pub total_execution_time_ns: AtomicU64,
 }
 
+impl ComputePoolMetrics {
+    pub fn tasks_submitted(&self) -> u64 {
+        self.tasks_submitted.load(Ordering::Relaxed)
+    }
+
+    pub fn tasks_completed(&self) -> u64 {
+        self.tasks_completed.load(Ordering::Relaxed)
+    }
+
+    pub fn tasks_failed(&self) -> u64 {
+        self.tasks_failed.load(Ordering::Relaxed)
+    }
+
+    pub fn active_workers(&self) -> usize {
+        self.active_workers.load(Ordering::Relaxed)
+    }
+
+    pub fn queue_depth_low(&self) -> usize {
+        self.queue_depth_low.load(Ordering::Relaxed)
+    }
+
+    pub fn queue_depth_normal(&self) -> usize {
+        self.queue_depth_normal.load(Ordering::Relaxed)
+    }
+
+    pub fn queue_depth_high(&self) -> usize {
+        self.queue_depth_high.load(Ordering::Relaxed)
+    }
+
+    pub fn queue_depth_critical(&self) -> usize {
+        self.queue_depth_critical.load(Ordering::Relaxed)
+    }
+
+    pub fn total_execution_time_ns(&self) -> u64 {
+        self.total_execution_time_ns.load(Ordering::Relaxed)
+    }
+}
 
 struct PriorityTask {
     task: Task,
