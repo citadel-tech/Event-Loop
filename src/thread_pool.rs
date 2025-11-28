@@ -162,6 +162,15 @@ pub struct ComputeThreadPool {
     sequence: AtomicU64,
 }
 
+impl Default for ComputeThreadPool {
+    fn default() -> Self {
+        let default_capacity = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(DEFAULT_POOL_CAPACITY);
+        Self::new(default_capacity)
+    }
+}
+
 impl ComputeThreadPool {
     pub fn new(capacity: usize) -> Self {
         let state = Arc::new(ComputeSharedState {
