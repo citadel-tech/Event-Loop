@@ -105,7 +105,7 @@ pub mod thread_pool;
 pub use handler::EventHandler;
 pub use mio::event::Event;
 pub use object_pool::{ObjectPool, PooledObject};
-pub use thread_pool::TaskPriority;
+pub use thread_pool::{ComputePoolMetrics, TaskPriority};
 
 use crate::error::Result;
 
@@ -126,7 +126,7 @@ pub mod prelude {
     pub use crate::handler::EventHandler;
     pub use crate::object_pool::{ObjectPool, PooledObject};
     pub use crate::reactor::{self, Reactor};
-    pub use crate::thread_pool::{self, TaskPriority, ThreadPool};
+    pub use crate::thread_pool::{self, ComputePoolMetrics, TaskPriority, ThreadPool};
 }
 
 /// The main event loop structure for registering I/O sources and handling events.
@@ -421,6 +421,11 @@ impl EventLoop {
         F: FnOnce() + Send + 'static,
     {
         self.reactor.spawn_compute(task, priority);
+    }
+
+    /// Returns metrics for the compute-intensive thread pool.
+    pub fn get_compute_metrics(&self) -> std::sync::Arc<ComputePoolMetrics> {
+        self.reactor.get_compute_metrics()
     }
 
     /// Signals the event loop to stop gracefully.

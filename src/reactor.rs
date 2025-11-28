@@ -1,7 +1,7 @@
 use crate::{
     error::Result,
     poll::PollHandle,
-    thread_pool::{ComputeThreadPool, TaskPriority, ThreadPool},
+    thread_pool::{ComputePoolMetrics, ComputeThreadPool, TaskPriority, ThreadPool},
 };
 use mio::{event::Event, Events};
 use std::{
@@ -102,6 +102,10 @@ impl Reactor {
         F: FnOnce() + Send + 'static,
     {
         self.compute_pool.spawn(task, priority);
+    }
+
+    pub fn get_compute_metrics(&self) -> Arc<ComputePoolMetrics> {
+        self.compute_pool.metrics()
     }
 
     pub fn get_events(&self) -> Arc<RwLock<Events>> {
