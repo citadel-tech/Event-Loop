@@ -264,10 +264,18 @@ impl ComputeThreadPool {
                             let t = queue.pop();
                             if let Some(ref pt) = t {
                                 match pt.priority {
-                                    TaskPriority::Low => metrics_clone.queue_depth_low.fetch_sub(1, Ordering::Relaxed),
-                                    TaskPriority::Normal => metrics_clone.queue_depth_normal.fetch_sub(1, Ordering::Relaxed),
-                                    TaskPriority::High => metrics_clone.queue_depth_high.fetch_sub(1, Ordering::Relaxed),
-                                    TaskPriority::Critical => metrics_clone.queue_depth_critical.fetch_sub(1, Ordering::Relaxed),
+                                    TaskPriority::Low => metrics_clone
+                                        .queue_depth_low
+                                        .fetch_sub(1, Ordering::Relaxed),
+                                    TaskPriority::Normal => metrics_clone
+                                        .queue_depth_normal
+                                        .fetch_sub(1, Ordering::Relaxed),
+                                    TaskPriority::High => metrics_clone
+                                        .queue_depth_high
+                                        .fetch_sub(1, Ordering::Relaxed),
+                                    TaskPriority::Critical => metrics_clone
+                                        .queue_depth_critical
+                                        .fetch_sub(1, Ordering::Relaxed),
                                 };
                             }
                             t
@@ -280,11 +288,15 @@ impl ComputeThreadPool {
                             let result = catch_unwind(AssertUnwindSafe(|| (priority_task.task)()));
 
                             let duration = start.elapsed();
-                            metrics_clone.total_execution_time_ns.fetch_add(duration.as_nanos() as u64, Ordering::Relaxed);
+                            metrics_clone
+                                .total_execution_time_ns
+                                .fetch_add(duration.as_nanos() as u64, Ordering::Relaxed);
                             metrics_clone.active_workers.fetch_sub(1, Ordering::Relaxed);
 
                             if result.is_ok() {
-                                metrics_clone.tasks_completed.fetch_add(1, Ordering::Relaxed);
+                                metrics_clone
+                                    .tasks_completed
+                                    .fetch_add(1, Ordering::Relaxed);
                             } else {
                                 metrics_clone.tasks_failed.fetch_add(1, Ordering::Relaxed);
                             }
@@ -320,9 +332,18 @@ impl ComputeThreadPool {
         self.metrics.tasks_submitted.fetch_add(1, Ordering::Relaxed);
         match priority {
             TaskPriority::Low => self.metrics.queue_depth_low.fetch_add(1, Ordering::Relaxed),
-            TaskPriority::Normal => self.metrics.queue_depth_normal.fetch_add(1, Ordering::Relaxed),
-            TaskPriority::High => self.metrics.queue_depth_high.fetch_add(1, Ordering::Relaxed),
-            TaskPriority::Critical => self.metrics.queue_depth_critical.fetch_add(1, Ordering::Relaxed),
+            TaskPriority::Normal => self
+                .metrics
+                .queue_depth_normal
+                .fetch_add(1, Ordering::Relaxed),
+            TaskPriority::High => self
+                .metrics
+                .queue_depth_high
+                .fetch_add(1, Ordering::Relaxed),
+            TaskPriority::Critical => self
+                .metrics
+                .queue_depth_critical
+                .fetch_add(1, Ordering::Relaxed),
         };
 
         let mut queue = self.state.queue.lock().unwrap();
