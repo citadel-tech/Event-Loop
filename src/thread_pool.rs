@@ -3,15 +3,22 @@ use std::sync::mpmc as channel;
 #[cfg(not(feature = "unstable-mpmc"))]
 use std::sync::mpsc as channel;
 use std::{
-    sync::atomic::{AtomicUsize, Ordering},
+    cmp::Ordering as CmpOrdering,
+    collections::BinaryHeap,
+    panic::{catch_unwind, AssertUnwindSafe},
+    sync::{
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+        Arc, Barrier, Condvar, Mutex,
+    },
     thread::{Builder, JoinHandle},
+    time::Instant,
 };
 
 use crate::error::Result;
 
 pub const DEFAULT_POOL_CAPACITY: usize = 4;
 
-type Task = Box<dyn FnOnce() + Send + 'static>;
+pub type Task = Box<dyn FnOnce() + Send + 'static>;
 
 enum WorkerMessage {
     Task(Task),
@@ -108,11 +115,263 @@ impl Worker {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum TaskPriority {
+    Low = 0,
+    Normal = 1,
+    High = 2,
+    Critical = 3,
+}
+
+#[derive(Debug, Default)]
+pub struct ComputePoolMetrics {
+    pub tasks_submitted: AtomicU64,
+    pub tasks_completed: AtomicU64,
+    pub tasks_failed: AtomicU64,
+    pub active_workers: AtomicUsize,
+    pub queue_depth_low: AtomicUsize,
+    pub queue_depth_normal: AtomicUsize,
+    pub queue_depth_high: AtomicUsize,
+    pub queue_depth_critical: AtomicUsize,
+    pub total_execution_time_ns: AtomicU64,
+}
+
+impl ComputePoolMetrics {
+    pub fn tasks_submitted(&self) -> u64 {
+        self.tasks_submitted.load(Ordering::Relaxed)
+    }
+
+    pub fn tasks_completed(&self) -> u64 {
+        self.tasks_completed.load(Ordering::Relaxed)
+    }
+
+    pub fn tasks_failed(&self) -> u64 {
+        self.tasks_failed.load(Ordering::Relaxed)
+    }
+
+    pub fn active_workers(&self) -> usize {
+        self.active_workers.load(Ordering::Relaxed)
+    }
+
+    pub fn queue_depth_low(&self) -> usize {
+        self.queue_depth_low.load(Ordering::Relaxed)
+    }
+
+    pub fn queue_depth_normal(&self) -> usize {
+        self.queue_depth_normal.load(Ordering::Relaxed)
+    }
+
+    pub fn queue_depth_high(&self) -> usize {
+        self.queue_depth_high.load(Ordering::Relaxed)
+    }
+
+    pub fn queue_depth_critical(&self) -> usize {
+        self.queue_depth_critical.load(Ordering::Relaxed)
+    }
+
+    pub fn total_execution_time_ns(&self) -> u64 {
+        self.total_execution_time_ns.load(Ordering::Relaxed)
+    }
+}
+
+struct PriorityTask {
+    task: Task,
+    priority: TaskPriority,
+    sequence: u64,
+}
+
+impl PartialEq for PriorityTask {
+    fn eq(&self, other: &Self) -> bool {
+        self.priority == other.priority && self.sequence == other.sequence
+    }
+}
+
+impl Eq for PriorityTask {}
+
+impl PartialOrd for PriorityTask {
+    fn partial_cmp(&self, other: &Self) -> Option<CmpOrdering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for PriorityTask {
+    fn cmp(&self, other: &Self) -> CmpOrdering {
+        match self.priority.cmp(&other.priority) {
+            CmpOrdering::Equal => other.sequence.cmp(&self.sequence),
+            ord => ord,
+        }
+    }
+}
+
+struct ComputeSharedState {
+    queue: Mutex<BinaryHeap<PriorityTask>>,
+    condvar: Condvar,
+    shutdown: AtomicBool,
+}
+
+pub struct ComputeThreadPool {
+    workers: Vec<JoinHandle<()>>,
+    state: Arc<ComputeSharedState>,
+    sequence: AtomicU64,
+    metrics: Arc<ComputePoolMetrics>,
+}
+
+impl Default for ComputeThreadPool {
+    fn default() -> Self {
+        let default_capacity = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(DEFAULT_POOL_CAPACITY);
+        Self::new(default_capacity)
+    }
+}
+
+impl ComputeThreadPool {
+    pub fn new(capacity: usize) -> Self {
+        let state = Arc::new(ComputeSharedState {
+            queue: Mutex::new(BinaryHeap::new()),
+            condvar: Condvar::new(),
+            shutdown: AtomicBool::new(false),
+        });
+        let metrics = Arc::new(ComputePoolMetrics::default());
+
+        let mut workers = Vec::with_capacity(capacity);
+        // barrier to ensure all workers are started before returning
+        let barrier = Arc::new(Barrier::new(capacity + 1));
+
+        for id in 0..capacity {
+            let state_clone = Arc::clone(&state);
+            let barrier_clone = Arc::clone(&barrier);
+            let metrics_clone = Arc::clone(&metrics);
+            let thread = Builder::new()
+                .name(format!("compute-worker-{id}"))
+                .spawn(move || {
+                    // wait for all workers to be ready
+                    barrier_clone.wait();
+
+                    loop {
+                        let task = {
+                            let mut queue = state_clone.queue.lock().unwrap();
+
+                            while queue.is_empty() && !state_clone.shutdown.load(Ordering::Relaxed)
+                            {
+                                queue = state_clone.condvar.wait(queue).unwrap();
+                            }
+
+                            if state_clone.shutdown.load(Ordering::Relaxed) && queue.is_empty() {
+                                break;
+                            }
+
+                            let t = queue.pop();
+                            if let Some(ref pt) = t {
+                                match pt.priority {
+                                    TaskPriority::Low => metrics_clone
+                                        .queue_depth_low
+                                        .fetch_sub(1, Ordering::Relaxed),
+                                    TaskPriority::Normal => metrics_clone
+                                        .queue_depth_normal
+                                        .fetch_sub(1, Ordering::Relaxed),
+                                    TaskPriority::High => metrics_clone
+                                        .queue_depth_high
+                                        .fetch_sub(1, Ordering::Relaxed),
+                                    TaskPriority::Critical => metrics_clone
+                                        .queue_depth_critical
+                                        .fetch_sub(1, Ordering::Relaxed),
+                                };
+                            }
+                            t
+                        };
+
+                        if let Some(priority_task) = task {
+                            metrics_clone.active_workers.fetch_add(1, Ordering::Relaxed);
+                            let start = Instant::now();
+
+                            let result = catch_unwind(AssertUnwindSafe(|| (priority_task.task)()));
+
+                            let duration = start.elapsed();
+                            metrics_clone
+                                .total_execution_time_ns
+                                .fetch_add(duration.as_nanos() as u64, Ordering::Relaxed);
+                            metrics_clone.active_workers.fetch_sub(1, Ordering::Relaxed);
+
+                            if result.is_ok() {
+                                metrics_clone
+                                    .tasks_completed
+                                    .fetch_add(1, Ordering::Relaxed);
+                            } else {
+                                metrics_clone.tasks_failed.fetch_add(1, Ordering::Relaxed);
+                            }
+                        }
+                    }
+                })
+                .expect("Failed to create compute worker thread");
+            workers.push(thread);
+        }
+
+        // wait for all workers to start
+        barrier.wait();
+
+        Self {
+            workers,
+            state,
+            sequence: AtomicU64::new(0),
+            metrics,
+        }
+    }
+
+    pub fn spawn<F>(&self, task: F, priority: TaskPriority)
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        let sequence = self.sequence.fetch_add(1, Ordering::Relaxed);
+        let priority_task = PriorityTask {
+            task: Box::new(task),
+            priority,
+            sequence,
+        };
+
+        self.metrics.tasks_submitted.fetch_add(1, Ordering::Relaxed);
+        match priority {
+            TaskPriority::Low => self.metrics.queue_depth_low.fetch_add(1, Ordering::Relaxed),
+            TaskPriority::Normal => self
+                .metrics
+                .queue_depth_normal
+                .fetch_add(1, Ordering::Relaxed),
+            TaskPriority::High => self
+                .metrics
+                .queue_depth_high
+                .fetch_add(1, Ordering::Relaxed),
+            TaskPriority::Critical => self
+                .metrics
+                .queue_depth_critical
+                .fetch_add(1, Ordering::Relaxed),
+        };
+
+        let mut queue = self.state.queue.lock().unwrap();
+        queue.push(priority_task);
+        self.state.condvar.notify_one();
+    }
+
+    pub fn metrics(&self) -> Arc<ComputePoolMetrics> {
+        self.metrics.clone()
+    }
+}
+
+impl Drop for ComputeThreadPool {
+    fn drop(&mut self) {
+        self.state.shutdown.store(true, Ordering::SeqCst);
+        self.state.condvar.notify_all();
+
+        for worker in self.workers.drain(..) {
+            let _ = worker.join();
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
         sync::atomic::{AtomicUsize, Ordering},
-        sync::Arc,
+        sync::{Arc, Barrier, Mutex},
         time::Duration,
     };
 
@@ -170,5 +429,124 @@ mod tests {
         }
 
         assert_eq!(counter.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn test_compute_pool_priority() {
+        let pool = ComputeThreadPool::new(1); // Single thread to ensure order execution
+        let result = Arc::new(Mutex::new(Vec::new()));
+
+        // use a barrier to ensure the first task is running and blocking the worker
+        let barrier = Arc::new(Barrier::new(2));
+        let b_clone = barrier.clone();
+
+        let r1 = result.clone();
+        pool.spawn(
+            move || {
+                b_clone.wait(); // signal that we started
+                std::thread::sleep(Duration::from_millis(50)); // block worker
+                r1.lock().unwrap().push(1);
+            },
+            TaskPriority::Low,
+        );
+
+        // wait for Task 1 to start
+        barrier.wait();
+
+        // these should be queued while the first one runs
+        let r2 = result.clone();
+        pool.spawn(
+            move || {
+                r2.lock().unwrap().push(2);
+            },
+            TaskPriority::Low,
+        );
+
+        let r3 = result.clone();
+        pool.spawn(
+            move || {
+                r3.lock().unwrap().push(3);
+            },
+            TaskPriority::High,
+        );
+
+        let r4 = result.clone();
+        pool.spawn(
+            move || {
+                r4.lock().unwrap().push(4);
+            },
+            TaskPriority::Normal,
+        );
+
+        // wait for tasks to finish
+        std::thread::sleep(Duration::from_millis(200));
+
+        let res = result.lock().unwrap();
+        // 1 runs first (started immediately).
+        // Then 3 (High), 4 (Normal), 2 (Low).
+        assert_eq!(*res, vec![1, 3, 4, 2]);
+    }
+
+    #[test]
+    fn test_compute_pool_metrics() {
+        let pool = ComputeThreadPool::new(2);
+        let metrics = pool.metrics();
+
+        let barrier = Arc::new(Barrier::new(3)); // 2 workers + main thread
+        let barrier_clone = barrier.clone();
+
+        // Task 1: Occupy worker 1
+        pool.spawn(
+            move || {
+                barrier_clone.wait(); // wait for main thread to check metrics
+            },
+            TaskPriority::Normal,
+        );
+
+        let barrier_clone2 = barrier.clone();
+        // Task 2: Occupy worker 2
+        pool.spawn(
+            move || {
+                barrier_clone2.wait(); // wait for main thread to check metrics
+            },
+            TaskPriority::Normal,
+        );
+
+        // wait a bit for workers to pick up tasks
+        std::thread::sleep(Duration::from_millis(50));
+
+        // Task 3: Queue (Low)
+        pool.spawn(|| {}, TaskPriority::Low);
+
+        // Task 4: Queue (High)
+        pool.spawn(|| {}, TaskPriority::High);
+
+        // check intermediate metrics
+        assert_eq!(metrics.tasks_submitted(), 4);
+        // both workers should be busy
+        assert_eq!(metrics.active_workers(), 2);
+        // queued tasks
+        assert_eq!(metrics.queue_depth_low(), 1);
+        assert_eq!(metrics.queue_depth_high(), 1);
+        // running tasks are popped, so normal queue depth is 0
+        assert_eq!(metrics.queue_depth_normal(), 0);
+
+        barrier.wait();
+
+        // wait for completion
+        let start = std::time::Instant::now();
+        while metrics.tasks_completed() < 4 {
+            if start.elapsed() > Duration::from_secs(2) {
+                panic!("Timed out waiting for tasks to complete");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        // check final metrics
+        assert_eq!(metrics.tasks_completed(), 4);
+        assert_eq!(metrics.active_workers(), 0);
+        assert_eq!(metrics.queue_depth_low(), 0);
+        assert_eq!(metrics.queue_depth_high(), 0);
+        assert!(metrics.total_execution_time_ns() > 0);
     }
 }
