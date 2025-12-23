@@ -5,6 +5,8 @@ A lightweight, production-ready event loop library for Rust that provides effici
 - **Runtime-agnostic**: No dependency on Tokio or other async runtimes
 - **Cross-platform**: Leverages mio's polling abstraction (epoll, kqueue, IOCP)
 - **Thread pool integration**: Configurable worker threads for handling I/O events
+- **Compute pool**: Dedicated priority-based thread pool for CPU-intensive tasks
+- **High-level networking**: TCP server/client with connection management
 - **Object pooling**: Reduces allocation overhead for frequent operations
 - **Clean API**: Simple registration and handler interface
 
@@ -14,29 +16,28 @@ Add Mill-IO to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-mill-io = "1.0.1"
+mill-io = "1.0.2"
+```
+
+With networking support:
+
+```toml
+[dependencies]
+mill-io = { version = "1.0.2", features = ["net"] }
 ```
 
 For unstable features:
 
 ```toml
 [dependencies]
-mill-io = { version = "1.0.1", features = ["unstable"] }
+mill-io = { version = "1.0.2", features = ["unstable"] }
 ```
-
-## Core Components
-
-- **Polling Abstraction**: Cross-platform event notification using mio
-- **Reactor Core**: Manages event loop lifecycle and dispatches events
-- **Thread Pool**: Scalable task execution with work distribution
-- **Object Pool**: Memory-efficient buffer management
-- **Handler Registry**: Thread-safe event handler management
 
 ## Quick Start
 
 ```rust
 use mill_io::{EventLoop, EventHandler};
-use mio::{net::TcpListener, Interest, Token};
+use mio::{net::TcpListener, Interest, Token, event::Event};
 
 struct EchoHandler;
 
@@ -47,8 +48,8 @@ impl EventHandler for EchoHandler {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut event_loop = EventLoop::default();
-    let mut listener = TcpListener::bind("127.0.0.1:8080")?;
+    let event_loop = EventLoop::default();
+    let mut listener = TcpListener::bind("127.0.0.1:8080".parse()?)?;
     
     event_loop.register(
         &mut listener,
@@ -64,22 +65,134 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-See [examples/echo_server.rs](examples/echo_server.rs) for a complete implementation.
+See [examples/scratch_echo_server.rs](examples/scratch_echo_server.rs) for a complete implementation.
+
+## High-Level TCP Networking
+
+Mill-IO provides a high-level TCP API that handles connection management automatically. Enable with the `net` feature.
+
+### TCP Server
+
+```rust
+use mill_io::net::tcp::{TcpServer, TcpServerConfig, traits::*, ServerContext};
+use mill_io::{EventLoop, error::Result};
+use std::sync::Arc;
+
+struct EchoHandler;
+
+impl NetworkHandler for EchoHandler {
+    fn on_connect(&self, _ctx: &ServerContext, conn_id: ConnectionId) -> Result<()> {
+        println!("Client connected: {:?}", conn_id);
+        Ok(())
+    }
+
+    fn on_data(&self, ctx: &ServerContext, conn_id: ConnectionId, data: &[u8]) -> Result<()> {
+        // echo back the data
+        ctx.send_to(conn_id, data)?;
+        Ok(())
+    }
+
+    fn on_disconnect(&self, _ctx: &ServerContext, conn_id: ConnectionId) -> Result<()> {
+        println!("Client disconnected: {:?}", conn_id);
+        Ok(())
+    }
+}
+
+fn main() -> Result<()> {
+    let event_loop = Arc::new(EventLoop::default());
+    
+    let config = TcpServerConfig::builder()
+        .address("127.0.0.1:8080".parse().unwrap())
+        .buffer_size(8192)
+        .max_connections(1000)
+        .no_delay(true)
+        .build();
+
+    let server = Arc::new(TcpServer::new(config, EchoHandler)?);
+    server.start(&event_loop, mio::Token(0))?;
+    
+    event_loop.run()?;
+    Ok(())
+}
+```
+
+### Server Context Operations
+
+The `ServerContext` provides methods for interacting with connections:
+
+```rust
+// Send data to a specific connection
+ctx.send_to(conn_id, b"Hello")?;
+
+// Broadcast to all connections
+ctx.broadcast(b"Message to all")?;
+
+// Close a connection
+ctx.close_connection(conn_id)?;
+```
+
+## Compute Thread Pool
+
+Mill-IO includes a dedicated thread pool for CPU-intensive operations, keeping the I/O event loop responsive. Tasks support priority scheduling.
+
+### Basic Usage
+
+```rust
+use mill_io::{EventLoop, TaskPriority};
+
+let event_loop = EventLoop::default();
+
+// Spawn with default (Normal) priority
+event_loop.spawn_compute(|| {
+    // CPU-intensive work here
+    let result = expensive_calculation();
+    println!("Result: {}", result);
+});
+
+// Spawn with specific priority
+event_loop.spawn_compute_with_priority(|| {
+    // Critical computation
+}, TaskPriority::Critical);
+```
+
+### Task Priorities
+
+Tasks are executed based on priority (highest first):
+
+- `TaskPriority::Critical` - Urgent tasks, processed first
+- `TaskPriority::High` - Important tasks
+- `TaskPriority::Normal` - Default priority
+- `TaskPriority::Low` - Background tasks
+
+### Monitoring Metrics
+
+```rust
+let metrics = event_loop.get_compute_metrics();
+
+println!("Tasks submitted: {}", metrics.tasks_submitted());
+println!("Tasks completed: {}", metrics.tasks_completed());
+println!("Tasks failed: {}", metrics.tasks_failed());
+println!("Active workers: {}", metrics.active_workers());
+println!("Queue depths - Low: {}, Normal: {}, High: {}, Critical: {}",
+    metrics.queue_depth_low(),
+    metrics.queue_depth_normal(),
+    metrics.queue_depth_high(),
+    metrics.queue_depth_critical()
+);
+println!("Total execution time: {}ms", metrics.total_execution_time_ns() / 1_000_000);
+```
+
+### Use Cases
+
+- Cryptographic operations (hashing, encryption)
+- Image/video processing
+- Data compression
+- Complex calculations
+- File parsing
 
 ## Examples
 
-Mill-IO includes several practical examples demonstrating different use cases:
-
-- **Echo Server** (`examples/echo_server.rs`): Basic TCP echo server implementation
-- **HTTP Server** (`examples/http_server.rs`): Simple HTTP server handling GET requests
-- **File Watcher** (`examples/file_watcher.rs`): File system monitoring with inotify
-- **JSON-RPC Server** (`examples/jsonrpc-server.rs`): JSON-RPC 2.0 server implementation
-
-Run an example:
-
-```bash
-cargo run --example echo_server
-```
+Mill-IO includes several practical examples demonstrating different use cases (See [examples](./examples)).
 
 ## Configuration
 
@@ -90,7 +203,7 @@ Mill-IO provides flexible configuration options:
 ```rust
 use mill_io::EventLoop;
 
-// Uses 4 worker threads, 1024 event capacity, 100ms timeout
+// Uses CPU cores for workers, 1024 event capacity, 150ms timeout
 let event_loop = EventLoop::default();
 ```
 
@@ -106,91 +219,52 @@ let event_loop = EventLoop::new(
 )?;
 ```
 
+### TCP Server Configuration
+
+```rust
+use mill_io::net::tcp::TcpServerConfig;
+
+let config = TcpServerConfig::builder()
+    .address("0.0.0.0:8080".parse().unwrap())
+    .buffer_size(16384)          // Read buffer size
+    .max_connections(10000)      // Connection limit
+    .no_delay(true)              // Disable Nagle's algorithm
+    .keep_alive(Some(Duration::from_secs(60)))
+    .build();
+```
+
 ### Thread Pool Sizing Guidelines
 
 - **CPU-bound tasks**: Number of CPU cores
 - **I/O-bound tasks**: 2-4x number of CPU cores
 - **Mixed workloads**: Start with CPU cores + 2
 
-### Memory Usage
-
-Object pooling reduces memory allocations. Pool sizes are automatically managed but can be tuned based on workload patterns.
-
-## Why It Exists
-
-Mill-IO was created to address the need for efficient I/O management in applications that want to avoid the complexity and overhead of full async runtimes. Specifically designed for projects like [Coinswap](https://github.com/citadel-tech/coinswap) that require:
-
-- Fine-grained control over concurrency
-- Minimal runtime dependencies  
-- Predictable performance characteristics
-- Runtime-agnostic architecture
-
-Rather than forcing applications into a specific async ecosystem, Mill-IO provides the building blocks for custom I/O handling while maintaining simplicity and performance.
-
-## Features
-
-- [x] Cross-platform I/O polling
-- [x] Configurable thread pool
-- [x] Object pooling for buffers
-- [x] Thread-safe handler registry
-- [x] Graceful shutdown handling
-- [ ] Timer wheel implementation (planned)
-- [ ] Rate limiting support (planned)
-- [ ] Connection pooling (planned)
-
 ## Architecture
 
-Mill-IO follows a modular, reactor-based architecture for efficient I/O event handling:
-
+```text
+┌─────────────────────────────────────────────────────────────┐
+│                      User Application                       │
+│  ┌──────────────┐          ┌─────────────────┐              │
+│  │ TcpServer/   │─────────+│ NetworkHandler  │              │
+│  │ TcpClient    │          │ (your handler)  │              │
+│  └──────────────┘          └─────────────────┘              │
+└────────────┬──────────────────────┬─────────────────────────┘
+             │                      │ Callbacks
+             │ Register             │ (on_connect, on_data, etc.)
+             +                      │
+┌─────────────────────────────────────────────────────────────┐
+│                      Mill-IO EventLoop                      │
+│  ┌──────────┐       ┌──────────┐       ┌──────────────┐     │
+│  │ Reactor  │──────+│ I/O Pool │       │ Compute Pool │     │
+│  │ (Poll)   │       │          │       │ (Priority)   │     │
+│  └──────────┘       └──────────┘       └──────────────┘     │
+└────────────┬────────────────────────────────────────────────┘
+             │ OS Events
+             +
+┌─────────────────────────────────────────────────────────────┐
+│              Operating System (epoll/kqueue/IOCP)           │
+└─────────────────────────────────────────────────────────────┘
 ```
-EventLoop
-    |
-    +-- Reactor
-        |
-        +-- PollHandle (Cross-platform polling)
-        |   |
-        |   +-- Handler Registry (Token -> Handler mapping)
-        |   |
-        |   +-- mio::Poll (System polling interface)
-        |
-        +-- ThreadPool (Worker threads)
-            |
-            +-- Worker threads (Configurable count)
-            |
-            +-- Job queue (Event dispatching)
-```
-
-### Core Components
-
-1. **Reactor Core**
-   - Central event loop coordinator
-   - Event polling and dispatch management
-   - Configurable timeouts and capacity
-   - Graceful shutdown handling
-
-2. **Handler Registry**
-   - Lock-free token-to-handler mapping
-   - O(1) handler lookups
-   - Thread-safe registration/deregistration
-
-3. **Thread Pool**
-   - Configurable worker thread count
-   - Work stealing via shared channel
-   - Automatic task distribution
-   - Support for both MPSC/MPMC channels
-
-4. **Object Pool**
-   - Efficient buffer recycling
-   - Reduced allocation overhead
-   - Automatic sizing and cleanup
-   - Thread-safe object lifecycle
-
-### Key Features
-
-- **Zero-copy I/O**: Efficient buffer management via object pooling
-- **Cross-platform**: Unified API across epoll/kqueue/IOCP
-- **Lock-free**: Minimal contention in hot paths
-- **Predictable**: Direct control over I/O operations
 
 For detailed architectural documentation, see [Architecture Guide](./docs/Arch.md)
 
