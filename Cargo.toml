@@ -47,5 +47,9 @@ required-features = ["net"]
 name = "tcp_http_server"
 required-features = ["net"]
 
+[[example]]
+name = "compute_pool"
+required-features = ["net"]
+
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 inotify = "0.10"
