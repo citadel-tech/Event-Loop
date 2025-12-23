@@ -31,8 +31,21 @@ serde_json = "1.0.141"
 
 [features]
 default = []
+net = []
 unstable-mpmc = []
 unstable = ["unstable-mpmc"]
+
+[[example]]
+name = "tcp_echo_server"
+required-features = ["net"]
+
+[[example]]
+name = "tcp_jsonrpc_server"
+required-features = ["net"]
+
+[[example]]
+name = "tcp_http_server"
+required-features = ["net"]
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 inotify = "0.10"

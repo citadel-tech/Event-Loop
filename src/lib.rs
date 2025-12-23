@@ -97,6 +97,8 @@
 use mio::{Interest, Token};
 pub mod error;
 pub mod handler;
+#[cfg(feature = "net")]
+pub mod net;
 pub mod object_pool;
 pub mod poll;
 pub mod reactor;
