@@ -224,7 +224,7 @@ sequenceDiagram
 
 ### 3. Handler Registry Design
 
-Uses lockfree map for handler storage:
+Uses lock_freedom map for handler storage:
 
 ```rust
 type Registry = Arc<Map<Token, HandlerEntry>>;
