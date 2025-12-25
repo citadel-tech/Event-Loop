@@ -241,31 +241,6 @@ let config = TcpServerConfig::builder()
 
 ## Architecture
 
-```text
-┌─────────────────────────────────────────────────────────────┐
-│                      User Application                       │
-│  ┌──────────────┐          ┌─────────────────┐              │
-│  │ TcpServer/   │─────────+│ NetworkHandler  │              │
-│  │ TcpClient    │          │ (your handler)  │              │
-│  └──────────────┘          └─────────────────┘              │
-└────────────┬──────────────────────┬─────────────────────────┘
-             │                      │ Callbacks
-             │ Register             │ (on_connect, on_data, etc.)
-             +                      │
-┌─────────────────────────────────────────────────────────────┐
-│                      Mill-IO EventLoop                      │
-│  ┌──────────┐       ┌──────────┐       ┌──────────────┐     │
-│  │ Reactor  │──────+│ I/O Pool │       │ Compute Pool │     │
-│  │ (Poll)   │       │          │       │ (Priority)   │     │
-│  └──────────┘       └──────────┘       └──────────────┘     │
-└────────────┬────────────────────────────────────────────────┘
-             │ OS Events
-             +
-┌─────────────────────────────────────────────────────────────┐
-│              Operating System (epoll/kqueue/IOCP)           │
-└─────────────────────────────────────────────────────────────┘
-```
-
 For detailed architectural documentation, see [Architecture Guide](./docs/Arch.md)
 
 ## Platform Support
