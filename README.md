@@ -16,21 +16,21 @@ Add Mill-IO to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-mill-io = "1.0.2"
+mill-io = "2.0.0"
 ```
 
 With networking support:
 
 ```toml
 [dependencies]
-mill-io = { version = "1.0.2", features = ["net"] }
+mill-io = { version = "2.0.0", features = ["net"] }
 ```
 
 For unstable features:
 
 ```toml
 [dependencies]
-mill-io = { version = "1.0.2", features = ["unstable"] }
+mill-io = { version = "2.0.0", features = ["unstable"] }
 ```
 
 ## Quick Start
