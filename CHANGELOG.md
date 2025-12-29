@@ -4,15 +4,41 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2025-12-30
+
+### Changed
+
+- feat: fetching available cores instead of default capacity of ThreadPool (#73, By @Sansh2356)
+- feat: event-loop-based Tcp Networking Layer (#74, By @hulxv)
+- feat: compute-intensive threadpool (#77, By @hulxv)
+
+### Fixed
+
+- fix: bottlenecks in the poll handler and threadpool (#76, By @hulxv)
+
+## [1.0.1] - 2025-9-16
+
+### Documentation
+
+- Fixed documentation errors throughout the codebase
+- Enhanced README.md with better explanations and examples
+
+### Development
+
+- Bumped version for documentation
+
 ## [1.0.2] - 2025-10-17
 
 ### Changed
+
 - Updated `mio-rs` to version `1.1.0` which includes the fix for macOS thread safety issues
 
 ### Fixed
+
 - Resolved macOS thread safety issues with `mio::Event` in worker threads (initially fixed with custom Event wrapper #70, then properly resolved by updating mio-rs after upstream fix #72)
 
 ### Development
+
 - Enhanced CI/CD with cross-platform testing workflows
 - Fixed clippy linting issues
 - Added unstable feature testing with nightly Rust channel
@@ -23,15 +49,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 ## [1.0.1] - 2025-9-16
 
 ### Documentation
+
 - Fixed documentation errors throughout the codebase
 - Enhanced README.md with better explanations and examples
 
 ### Development
+
 - Bumped version for documentation fixes
 
 ## [1.0.0] - 2025-9-15
 
 ### Added
+
 - Complete event loop implementation with reactor pattern
 - Thread pool for efficient task execution
 - Object pool for memory management optimization
@@ -41,6 +70,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Multiple channel types (MPMC/MPSC) for inter-thread communication
 
 ### Examples
+
 - **Echo Server**: Complete TCP echo server implementation
 - **HTTP Server**: Basic HTTP server example
 - **File Watcher**: File system monitoring example  
