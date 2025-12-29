@@ -9,7 +9,7 @@ use std::{
     time::SystemTime,
 };
 
-use lockfree::map::Map;
+use lock_freedom::map::Map;
 
 static EVENT_LOOP: OnceLock<EventLoop> = OnceLock::new();
 fn event_loop() -> &'static EventLoop {
