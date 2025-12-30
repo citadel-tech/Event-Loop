@@ -10,32 +10,32 @@
 //! Connection Storage:
 //!   LockfreeMap<u64, TcpConnection>
 //!        │
-//!        ├──> ConnId(1) ──> TcpConnection { stream, token, addr }
-//!        ├──> ConnId(2) ──> TcpConnection { stream, token, addr }
-//!        └──> ConnId(N) ──> TcpConnection { stream, token, addr }
+//!        ├--> ConnId(1) --> TcpConnection { stream, token, addr }
+//!        ├--> ConnId(2) --> TcpConnection { stream, token, addr }
+//!        └--> ConnId(N) --> TcpConnection { stream, token, addr }
 //! ```
 //!
 //! ## Event Handling Pipeline
 //!
 //! ```text
 //! 1. Listener Events:
-//!    New Connection ──> TcpListenerHandler::handle_event()
-//!        - accept() ──> Create ConnectionId
+//!    New Connection --> TcpListenerHandler::handle_event()
+//!        - accept() --> Create ConnectionId
 //!        - Register TcpConnectionHandler with EventLoop
 //!        - Insert into LockfreeMap
 //!        - Call handler.on_connect()
 //!
 //! 2. Connection Events:
-//!    Readable Event ──> TcpConnectionHandler::handle_event()
+//!    Readable Event --> TcpConnectionHandler::handle_event()
 //!        - Read from stream into pooled buffer
 //!        - Call handler.on_data()
 //!        - If EOF: disconnect()
 //!
-//!    Writable Event ──> TcpConnectionHandler::handle_event()
+//!    Writable Event --> TcpConnectionHandler::handle_event()
 //!        - Call handler.on_writable()
 //!
 //! 3. Disconnection:
-//!    disconnect() ──> Remove from LockfreeMap
+//!    disconnect() --> Remove from LockfreeMap
 //!        - Deregister from EventLoop
 //!        - Call handler.on_disconnect()
 //! ```
