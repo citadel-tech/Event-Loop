@@ -1,3 +1,5 @@
+#![allow(clippy::new_without_default)]
+
 use lock_freedom::map::Map;
 use mill_io::error::Result;
 use mill_io::EventLoop;
