@@ -1,55 +1,16 @@
-[package]
-name = "mill-io"
-version = "2.0.1"
-edition = "2021"
-authors = ["Citadel-tech", "Mohamed Emad <hulxxv@gmail.com>"]
-description = "A lightweight event loop library for Rust that provides efficient non-blocking I/O management without relying on heavyweight async runtimes."
-documentation = "https://docs.rs/mill-io"
-homepage = "https://github.com/citadel-tech/Event-Loop"
-repository = "https://github.com/citadel-tech/Event-Loop"
-readme = "README.md"
+[workspace]
+members = ["mill-io", "mill-net"]
+resolver = "2"
+
+[workspace.package]
+authors = ["Citadel-tech", "Mohamed Emad "]
 license = "Apache-2.0"
-keywords = ["io", "event-loop", "mio", "networking", "reactor"]
-categories = ["network-programming", "asynchronous", "concurrency"]
-include = [
-    "src/**/*",
-    "examples/**/*",
-    "docs/**/*",
-    "Cargo.toml",
-    "README.md",
-    "LICENSE",
-]
+edition = "2021"
 rust-version = "1.70"
 
-[dependencies]
-lock_freedom = "0.1.1"
+[workspace.dependencies]
 mio = { version = "1.1.0", features = ["os-poll", "net"] }
+lock_freedom = "0.1.1"
 
-[dev-dependencies]
-serde ={ version = "1.0.219", features = ["derive"] }
-serde_json = "1.0.141"
-
-[features]
-default = []
-net = []
-unstable-mpmc = []
-unstable = ["unstable-mpmc"]
-
-[[example]]
-name = "tcp_echo_server"
-required-features = ["net"]
-
-[[example]]
-name = "tcp_jsonrpc_server"
-required-features = ["net"]
-
-[[example]]
-name = "tcp_http_server"
-required-features = ["net"]
-
-[[example]]
-name = "compute_pool"
-required-features = ["net"]
-
-[target.'cfg(target_os = "linux")'.dev-dependencies]
-inotify = "0.10"
+mill-io = { path = "mill-io" }
+mill-net = { path = "mill-net" }

@@ -81,9 +81,9 @@ pub mod traits;
 pub use config::TcpServerConfig;
 pub use traits::*;
 
-use crate::error::Result;
-use crate::net::errors::{NetworkError, NetworkEvent};
-use crate::{EventHandler, EventLoop, ObjectPool, PooledObject};
+use crate::errors::Result;
+use crate::errors::{NetworkError, NetworkEvent};
+use mill_io::{EventHandler, EventLoop, ObjectPool, PooledObject};
 use lock_freedom::map::Map as LockfreeMap;
 use mio::event::Event;
 use mio::net::{TcpListener, TcpStream};
@@ -817,7 +817,7 @@ impl<H: NetworkHandler> TcpClientHandler<H> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::EventLoop;
+    use mill_io::EventLoop;
     use std::sync::{Arc, Condvar, Mutex};
     use std::thread;
     use std::time::Duration;

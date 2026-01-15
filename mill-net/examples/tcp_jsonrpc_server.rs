@@ -1,7 +1,7 @@
 use lock_freedom::map::Map;
 use mill_io::error::Result;
-use mill_io::net::errors::{NetworkError, NetworkEvent};
-use mill_io::net::tcp::{
+use mill_net::errors::{NetworkError, NetworkEvent};
+use mill_net::tcp::{
     config::TcpServerConfig, traits::*, ConnectionId, ServerContext, TcpServer,
 };
 use mill_io::EventLoop;

@@ -1,0 +1,39 @@
+[package]
+name = "mill-net"
+version = "2.0.1"
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "High-level networking protocols components built with mill-io event-loop library."
+documentation = "https://docs.rs/mill-net"
+homepage = "https://github.com/citadel-tech/mill-io"
+repository = "https://github.com/citadel-tech/mill-io"
+readme = "README.md"
+keywords = ["networking", "tcp", "mill-io", "event-loop", "async"]
+categories = ["network-programming", "asynchronous"]
+
+[dependencies]
+mill-io.workspace = true
+mio.workspace = true
+lock_freedom.workspace = true
+
+[dev-dependencies]
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.141"
+
+[features]
+default = ["tcp"]
+tcp = []
+
+[[example]]
+name = "tcp_echo_server"
+required-features = ["tcp"]
+
+[[example]]
+name = "tcp_http_server"
+required-features = ["tcp"]
+
+[[example]]
+name = "tcp_jsonrpc_server"
+required-features = ["tcp"]

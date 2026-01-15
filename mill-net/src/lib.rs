@@ -1,6 +1,6 @@
-//! Network protocol implementations for Mill-IO event loop.
+//! High-level networking abstractions based on Mill-IO event loop library. 
 //!
-//! This module provides high-level networking abstractions that integrate with
+//! This library provides high-level networking abstractions that integrate with
 //! Mill-IO's reactor-based event loop. The design eliminates the need for async/await
 //! while providing efficient non-blocking I/O through handler callbacks.
 //!
