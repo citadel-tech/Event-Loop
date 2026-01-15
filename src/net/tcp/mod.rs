@@ -84,7 +84,7 @@ pub use traits::*;
 use crate::error::Result;
 use crate::net::errors::{NetworkError, NetworkEvent};
 use crate::{EventHandler, EventLoop, ObjectPool, PooledObject};
-use lockfree::map::Map as LockfreeMap;
+use lock_freedom::map::Map as LockfreeMap;
 use mio::event::Event;
 use mio::net::{TcpListener, TcpStream};
 use mio::{Interest, Token};

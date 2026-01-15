@@ -1,4 +1,4 @@
-use lockfree::map::Map;
+use lock_freedom::map::Map;
 use mill_io::error::Result;
 use mill_io::net::errors::{NetworkError, NetworkEvent};
 use mill_io::net::tcp::{
