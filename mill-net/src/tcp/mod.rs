@@ -45,7 +45,7 @@
 //! TcpServerConfig uses the builder pattern for ergonomic configuration:
 //!
 //! ```rust
-//! use mill_io::net::tcp::config::TcpServerConfig;
+//! use mill_net::tcp::config::TcpServerConfig;
 //! # use std::sync::Arc;
 //!
 //! let config = TcpServerConfig::builder()
@@ -61,8 +61,8 @@
 //! Your handler must implement NetworkHandler trait.
 //!
 //! ```rust
-//! use mill_io::net::tcp::{traits::{NetworkHandler, ConnectionId}, ServerContext};
-//! use mill_io::error::Result;
+//! use mill_net::tcp::{traits::{NetworkHandler, ConnectionId}, ServerContext};
+//! use mill_net::errors::Result;
 //!
 //! struct MyHandler;
 //!

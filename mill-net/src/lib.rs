@@ -38,8 +38,8 @@
 //! # Example
 //!
 //! ```rust,no_run
-//! use mill_io::net::tcp::{TcpServer, TcpServerConfig};
-//! use mill_io::net::tcp::{traits::{NetworkHandler, ConnectionId}, ServerContext};
+//! use mill_net::tcp::{TcpServer, TcpServerConfig};
+//! use mill_net::tcp::{traits::{NetworkHandler, ConnectionId}, ServerContext};
 //! use mill_io::{EventLoop, error::Result};
 //! use std::sync::Arc;
 //!
