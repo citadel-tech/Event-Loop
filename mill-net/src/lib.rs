@@ -1,4 +1,4 @@
-//! High-level networking abstractions based on Mill-IO event loop library. 
+//! High-level networking abstractions based on Mill-IO event loop library.
 //!
 //! This library provides high-level networking abstractions that integrate with
 //! Mill-IO's reactor-based event loop. The design eliminates the need for async/await

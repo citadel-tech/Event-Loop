@@ -1,9 +1,7 @@
 use mill_io::error::Result;
-use mill_net::errors::{NetworkError, NetworkEvent};
-use mill_net::tcp::{
-    config::TcpServerConfig, traits::*, ConnectionId, ServerContext, TcpServer,
-};
 use mill_io::EventLoop;
+use mill_net::errors::{NetworkError, NetworkEvent};
+use mill_net::tcp::{config::TcpServerConfig, traits::*, ConnectionId, ServerContext, TcpServer};
 use mio::Token;
 use std::collections::HashMap;
 use std::sync::Arc;

@@ -1,10 +1,8 @@
 use lock_freedom::map::Map;
 use mill_io::error::Result;
-use mill_net::errors::{NetworkError, NetworkEvent};
-use mill_net::tcp::{
-    config::TcpServerConfig, traits::*, ConnectionId, ServerContext, TcpServer,
-};
 use mill_io::EventLoop;
+use mill_net::errors::{NetworkError, NetworkEvent};
+use mill_net::tcp::{config::TcpServerConfig, traits::*, ConnectionId, ServerContext, TcpServer};
 use mio::Token;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;

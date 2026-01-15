@@ -1,7 +1,4 @@
-use mill_io::{
-    error::Result,
-    EventLoop, TaskPriority,
-};
+use mill_io::{error::Result, EventLoop, TaskPriority};
 
 use mill_net::tcp::{
     traits::{ConnectionId, NetworkHandler},

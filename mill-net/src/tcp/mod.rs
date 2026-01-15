@@ -83,8 +83,8 @@ pub use traits::*;
 
 use crate::errors::Result;
 use crate::errors::{NetworkError, NetworkEvent};
-use mill_io::{EventHandler, EventLoop, ObjectPool, PooledObject};
 use lock_freedom::map::Map as LockfreeMap;
+use mill_io::{EventHandler, EventLoop, ObjectPool, PooledObject};
 use mio::event::Event;
 use mio::net::{TcpListener, TcpStream};
 use mio::{Interest, Token};
