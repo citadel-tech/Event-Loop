@@ -1,5 +1,5 @@
-use crate::error::Result;
-use crate::net::errors::{NetworkError, NetworkEvent};
+use crate::errors::Result;
+use crate::errors::{NetworkError, NetworkEvent};
 
 use super::ServerContext;
 

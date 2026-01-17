@@ -1,11 +1,10 @@
-use mill_io::{
-    error::Result,
-    net::tcp::{
-        traits::{ConnectionId, NetworkHandler},
-        ServerContext, TcpServer, TcpServerConfig,
-    },
-    EventLoop, TaskPriority,
+use mill_io::{error::Result, EventLoop, TaskPriority};
+
+use mill_net::tcp::{
+    traits::{ConnectionId, NetworkHandler},
+    ServerContext, TcpServer, TcpServerConfig,
 };
+
 use mio::Token;
 use std::{
     collections::HashMap,

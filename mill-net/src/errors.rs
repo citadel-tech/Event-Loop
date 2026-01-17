@@ -1,7 +1,9 @@
-use crate::net::tcp::ConnectionId;
+use crate::tcp::ConnectionId;
 use std::fmt;
 use std::io;
 use std::net::SocketAddr;
+
+pub use mill_io::error::Result;
 
 #[derive(Debug)]
 pub enum NetworkError {

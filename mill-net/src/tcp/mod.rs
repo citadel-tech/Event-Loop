@@ -45,7 +45,7 @@
 //! TcpServerConfig uses the builder pattern for ergonomic configuration:
 //!
 //! ```rust
-//! use mill_io::net::tcp::config::TcpServerConfig;
+//! use mill_net::tcp::config::TcpServerConfig;
 //! # use std::sync::Arc;
 //!
 //! let config = TcpServerConfig::builder()
@@ -61,8 +61,8 @@
 //! Your handler must implement NetworkHandler trait.
 //!
 //! ```rust
-//! use mill_io::net::tcp::{traits::{NetworkHandler, ConnectionId}, ServerContext};
-//! use mill_io::error::Result;
+//! use mill_net::tcp::{traits::{NetworkHandler, ConnectionId}, ServerContext};
+//! use mill_net::errors::Result;
 //!
 //! struct MyHandler;
 //!
@@ -81,10 +81,10 @@ pub mod traits;
 pub use config::TcpServerConfig;
 pub use traits::*;
 
-use crate::error::Result;
-use crate::net::errors::{NetworkError, NetworkEvent};
-use crate::{EventHandler, EventLoop, ObjectPool, PooledObject};
+use crate::errors::Result;
+use crate::errors::{NetworkError, NetworkEvent};
 use lock_freedom::map::Map as LockfreeMap;
+use mill_io::{EventHandler, EventLoop, ObjectPool, PooledObject};
 use mio::event::Event;
 use mio::net::{TcpListener, TcpStream};
 use mio::{Interest, Token};
@@ -817,7 +817,7 @@ impl<H: NetworkHandler> TcpClientHandler<H> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::EventLoop;
+    use mill_io::EventLoop;
     use std::sync::{Arc, Condvar, Mutex};
     use std::thread;
     use std::time::Duration;
