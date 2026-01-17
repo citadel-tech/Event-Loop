@@ -1,0 +1,44 @@
+name: Bench
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        rust: [stable, nightly]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: ${{ matrix.rust }}
+        components: rustfmt
+
+    - name: Cache cargo dependencies
+      uses: actions/cache@v4
+      with:
+        path: ~/.cargo/registry
+
+    - name: Build
+      run: cargo build --release
+
+    - name: Run benchmarks for mill-io
+      run: cargo bench -p mill-io -- --noplot --save-baseline=baseline-${{ matrix.rust }}
+    
+    - name: Run benchmarks for mill-net
+      run: cargo bench -p mill-net -- --noplot --save-baseline=baseline-${{ matrix.rust }}
+
+    - name: Upload benchmark results
+      uses: actions/upload-artifact@v3
+      with:
+        name: benchmark-results-${{ matrix.rust }}
+        path: target/criterion
