@@ -107,7 +107,7 @@ pub use mio::event::Event;
 pub use object_pool::{ObjectPool, PooledObject};
 pub use thread_pool::{ComputePoolMetrics, TaskPriority};
 
-use crate::error::Result;
+use crate::{error::Result, reactor::ReactorOptions};
 
 /// A convenient prelude module that re-exports commonly used types and traits.
 ///
@@ -226,6 +226,26 @@ impl EventLoop {
     /// ```
     pub fn new(workers: usize, events_capacity: usize, poll_timeout_ms: u64) -> Result<Self> {
         let reactor = reactor::Reactor::new(workers, events_capacity, poll_timeout_ms)?;
+        Ok(Self { reactor })
+    }
+
+    /// Creates a new EventLoop optimized for low latency.
+    ///
+    /// This mode:
+    /// - Executes handlers directly on the reactor thread (no thread pool dispatch)
+    /// - Uses thread-local buffer pools (no lock contention)
+    /// - Best for I/O-bound workloads with fast handlers
+    ///
+    /// WARNING: Slow handlers will block all I/O processing!
+    pub fn new_low_latency(events_capacity: usize, poll_timeout_ms: u64) -> Result<Self> {
+        let reactor = reactor::Reactor::new_with_options(
+            1, // Minimal pool for compute tasks
+            events_capacity,
+            poll_timeout_ms,
+            ReactorOptions {
+                direct_dispatch: true,
+            },
+        )?;
         Ok(Self { reactor })
     }
 

@@ -15,6 +15,10 @@ use std::{
 pub const DEFAULT_EVENTS_CAPACITY: usize = 1024;
 pub const DEFAULT_POLL_TIMEOUT_MS: u64 = 150;
 
+pub struct ReactorOptions {
+    pub direct_dispatch: bool,
+}
+
 pub struct Reactor {
     pub(crate) poll_handle: PollHandle,
     events: Arc<RwLock<Events>>,
@@ -22,6 +26,7 @@ pub struct Reactor {
     compute_pool: ComputeThreadPool,
     running: AtomicBool,
     poll_timeout_ms: u64,
+    options: ReactorOptions,
 }
 
 impl Default for Reactor {
@@ -37,6 +42,9 @@ impl Default for Reactor {
             ),
             running: AtomicBool::new(false),
             poll_timeout_ms: DEFAULT_POLL_TIMEOUT_MS,
+            options: ReactorOptions {
+                direct_dispatch: false,
+            },
         }
     }
 }
@@ -50,6 +58,26 @@ impl Reactor {
             compute_pool: ComputeThreadPool::default(),
             running: AtomicBool::new(false),
             poll_timeout_ms,
+            options: ReactorOptions {
+                direct_dispatch: false,
+            },
+        })
+    }
+
+    pub fn new_with_options(
+        pool_size: usize,
+        events_capacity: usize,
+        poll_timeout_ms: u64,
+        options: ReactorOptions,
+    ) -> Result<Self> {
+        Ok(Self {
+            poll_handle: PollHandle::new()?,
+            events: Arc::new(RwLock::new(Events::with_capacity(events_capacity))),
+            pool: ThreadPool::new(pool_size),
+            compute_pool: ComputeThreadPool::default(),
+            running: AtomicBool::new(false),
+            poll_timeout_ms,
+            options,
         })
     }
 
@@ -83,9 +111,9 @@ impl Reactor {
 
         let registry = self.poll_handle.get_registery();
 
-        self.pool.exec(move || {
-            let entry = registry.get(&token);
-            if let Some(entry) = entry {
+        if self.options.direct_dispatch {
+            // FAST PATH: Direct execution on reactor thread
+            if let Some(entry) = registry.get(&token) {
                 let interest = entry.1.interest;
                 let handler = entry.1.handler.as_ref();
                 if (interest.is_readable() && is_readable)
@@ -94,7 +122,22 @@ impl Reactor {
                     handler.handle_event(&event);
                 }
             }
-        })
+            Ok(())
+        } else {
+            // SLOW PATH: Dispatch to thread pool
+            self.pool.exec(move || {
+                let entry = registry.get(&token);
+                if let Some(entry) = entry {
+                    let interest = entry.1.interest;
+                    let handler = entry.1.handler.as_ref();
+                    if (interest.is_readable() && is_readable)
+                        || (interest.is_writable() && is_writable)
+                    {
+                        handler.handle_event(&event);
+                    }
+                }
+            })
+        }
     }
 
     pub fn spawn_compute<F>(&self, task: F, priority: TaskPriority)
