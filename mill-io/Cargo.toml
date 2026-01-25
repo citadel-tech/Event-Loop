@@ -16,6 +16,7 @@ categories = ["network-programming", "asynchronous", "concurrency"]
 [dependencies]
 mio.workspace = true
 lock_freedom.workspace = true
+parking_lot.workspace = true
 
 [dev-dependencies]
 serde = { version = "1.0.219", features = ["derive"] }

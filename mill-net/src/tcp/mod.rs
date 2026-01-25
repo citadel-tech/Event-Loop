@@ -88,12 +88,13 @@ use mill_io::{EventHandler, EventLoop, ObjectPool, PooledObject};
 use mio::event::Event;
 use mio::net::{TcpListener, TcpStream};
 use mio::{Interest, Token};
+use parking_lot::Mutex;
 use std::io;
 use std::io::{Read, Write};
 use std::net::SocketAddr;
 use std::sync::{
     atomic::{AtomicU64, AtomicUsize, Ordering},
-    Arc, Mutex, RwLock, Weak,
+    Arc, RwLock, Weak,
 };
 
 /// Context for network handlers to interact with the server.
@@ -146,7 +147,7 @@ trait ServerOperations: Send + Sync {
 /// High-level TCP server
 pub struct TcpServer<H: NetworkHandler> {
     listener: Arc<Mutex<TcpListener>>,
-    connections: Arc<LockfreeMap<u64, TcpConnection>>,
+    connections: Arc<LockfreeMap<ConnectionId, TcpConnection>>,
     handler: Arc<H>,
     config: TcpServerConfig,
     buffer_pool: ObjectPool<Vec<u8>>,
@@ -176,13 +177,7 @@ impl<H: NetworkHandler> TcpServer<H> {
 
     /// Get the local address the server is bound to
     pub fn local_addr(&self) -> Result<SocketAddr> {
-        let listener = self.listener.lock().map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::Other,
-                format!("Listener mutex poisoned: {}", e),
-            )
-        })?;
-        Ok(listener.local_addr()?)
+        Ok(self.listener.lock().local_addr()?)
     }
 
     /// Start the server by registering with the event loop
@@ -207,15 +202,8 @@ impl<H: NetworkHandler> TcpServer<H> {
             context: self.context.clone(),
         };
 
-        let mut listener = self.listener.lock().map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::Other,
-                format!("Listener mutex poisoned: {}", e),
-            )
-        })?;
-
         event_loop.register(
-            &mut *listener,
+            &mut *self.listener.lock(),
             listener_token,
             Interest::READABLE,
             listener_handler,
@@ -233,13 +221,8 @@ impl<H: NetworkHandler> TcpServer<H> {
 impl<H: NetworkHandler> ServerOperations for TcpServer<H> {
     /// Send data to a specific connection
     fn send_to(&self, conn_id: ConnectionId, data: &[u8]) -> Result<()> {
-        if let Some(conn) = self.connections.get(&conn_id.as_u64()) {
-            let mut stream = conn.val().stream.lock().map_err(|e| {
-                io::Error::new(
-                    io::ErrorKind::Other,
-                    format!("Stream mutex poisoned: {}", e),
-                )
-            })?;
+        if let Some(conn) = self.connections.get(&conn_id) {
+            let mut stream = conn.val().stream.lock();
             stream.write_all(data)?;
         } else {
             return Err(Box::new(NetworkError::ConnectionNotFound(conn_id)));
@@ -249,18 +232,8 @@ impl<H: NetworkHandler> ServerOperations for TcpServer<H> {
 
     /// Close a specific connection
     fn close_connection(&self, event_loop: &EventLoop, conn_id: ConnectionId) -> Result<()> {
-        if let Some(conn) = self.connections.remove(&conn_id.as_u64()) {
-            let mut stream = match conn.val().stream.lock() {
-                Ok(s) => s,
-                Err(e) => {
-                    self.handler.on_error(
-                        &self.context,
-                        Some(conn_id),
-                        NetworkError::PoisonedLock(format!("Stream mutex on close: {}", e)),
-                    );
-                    e.into_inner()
-                }
-            };
+        if let Some(conn) = self.connections.remove(&conn_id) {
+            let mut stream = conn.val().stream.lock();
 
             let _ = event_loop.deregister(&mut *stream, conn.val().token);
             let _ = stream.shutdown(std::net::Shutdown::Both);
@@ -283,8 +256,13 @@ impl<H: NetworkHandler> ServerOperations for TcpServer<H> {
     /// Broadcast data to all connections
     fn broadcast(&self, data: &[u8]) -> Result<()> {
         for conn in self.connections.iter() {
-            if let Ok(mut stream) = conn.val().stream.lock() {
-                let _ = stream.write_all(data);
+            let mut stream = conn.val().stream.lock();
+            if let Err(e) = stream.write_all(data) {
+                self.handler.on_error(
+                    &self.context,
+                    Some(*conn.key()),
+                    NetworkError::Io(Box::new(e)),
+                );
             }
         }
         Ok(())
@@ -302,7 +280,7 @@ struct TcpConnection {
 /// Handler for accepting new connections
 struct TcpListenerHandler<H: NetworkHandler> {
     listener: Arc<Mutex<TcpListener>>,
-    connections: Arc<LockfreeMap<u64, TcpConnection>>,
+    connections: Arc<LockfreeMap<ConnectionId, TcpConnection>>,
     handler: Arc<H>,
     config: TcpServerConfig,
     buffer_pool: ObjectPool<Vec<u8>>,
@@ -323,17 +301,7 @@ impl<H: NetworkHandler> EventHandler for TcpListenerHandler<H> {
         }
 
         loop {
-            let listener = match self.listener.lock() {
-                Ok(l) => l,
-                Err(e) => {
-                    self.handler.on_error(
-                        &self.context,
-                        None,
-                        NetworkError::PoisonedLock(format!("Listener mutex: {}", e)),
-                    );
-                    return;
-                }
-            };
+            let listener = self.listener.lock();
 
             match listener.accept() {
                 Ok((stream, peer_addr)) => {
@@ -360,10 +328,7 @@ impl<H: NetworkHandler> EventHandler for TcpListenerHandler<H> {
                                     accepted = true;
                                     break;
                                 }
-                                Err(_) => {
-                                    // try again if the value changed.
-                                    continue;
-                                }
+                                Err(_) => continue,
                             }
                         }
                         if !accepted {
@@ -406,30 +371,11 @@ impl<H: NetworkHandler> EventHandler for TcpListenerHandler<H> {
                         self.handler
                             .on_error(&self.context, None, NetworkError::EventLoopGone);
                         self.connection_counter.fetch_sub(1, Ordering::SeqCst);
-                        // The stream is dropped here, closing the connection.
                         continue;
                     };
 
-                    // let stream_clone = Arc::clone(&stream_arc);
-                    let mut stream_guard = match stream_arc.lock() {
-                        Ok(s) => s,
-                        Err(e) => {
-                            self.handler.on_error(
-                                &self.context,
-                                Some(conn_id),
-                                NetworkError::PoisonedLock(format!(
-                                    "Stream mutex registration: {}",
-                                    e
-                                )),
-                            );
-                            self.connection_counter.fetch_sub(1, Ordering::SeqCst);
-                            continue;
-                        }
-                    };
-
-                    // If registration fails, the stream is dropped and the connection is closed.
                     if let Err(e) = event_loop.register(
-                        &mut *stream_guard,
+                        &mut *stream_arc.lock(),
                         token,
                         Interest::READABLE | Interest::WRITABLE,
                         conn_handler,
@@ -441,18 +387,17 @@ impl<H: NetworkHandler> EventHandler for TcpListenerHandler<H> {
                     }
 
                     let conn = TcpConnection {
-                        stream: stream_arc.clone(),
+                        stream: stream_arc,
                         token,
                         peer_addr,
                     };
-                    self.connections.insert(conn_id.as_u64(), conn);
+                    self.connections.insert(conn_id, conn);
 
                     let _ = self.handler.on_event(
                         &self.context,
                         NetworkEvent::ConnectionEstablished(conn_id, peer_addr),
                     );
 
-                    // If the user's on_connect handler fails, we must clean up the connection.
                     if let Err(e) = self.handler.on_connect(&self.context, conn_id) {
                         self.handler.on_error(
                             &self.context,
@@ -461,10 +406,9 @@ impl<H: NetworkHandler> EventHandler for TcpListenerHandler<H> {
                         );
 
                         // Remove the connection from the map and deregister from the event loop.
-                        if let Some(conn) = self.connections.remove(&conn_id.as_u64()) {
-                            if let Ok(mut stream) = conn.val().stream.lock() {
-                                let _ = event_loop.deregister(&mut *stream, conn.val().token);
-                            }
+                        if let Some(conn) = self.connections.remove(&conn_id) {
+                            let mut stream = conn.val().stream.lock();
+                            let _ = event_loop.deregister(&mut *stream, conn.val().token);
                         }
                         self.connection_counter.fetch_sub(1, Ordering::SeqCst);
                         continue;
@@ -487,7 +431,7 @@ impl<H: NetworkHandler> EventHandler for TcpListenerHandler<H> {
 struct TcpConnectionHandler<H: NetworkHandler> {
     conn_id: ConnectionId,
     stream: Arc<Mutex<TcpStream>>,
-    connections: Arc<LockfreeMap<u64, TcpConnection>>,
+    connections: Arc<LockfreeMap<ConnectionId, TcpConnection>>,
     handler: Arc<H>,
     buffer_pool: ObjectPool<Vec<u8>>,
     event_loop: Weak<EventLoop>,
@@ -524,18 +468,7 @@ impl<H: NetworkHandler> TcpConnectionHandler<H> {
         let mut buffer: PooledObject<Vec<u8>> = self.buffer_pool.acquire();
 
         let read_result = {
-            let mut stream = match self.stream.lock() {
-                Ok(s) => s,
-                Err(e) => {
-                    self.handler.on_error(
-                        &self.context,
-                        Some(self.conn_id),
-                        NetworkError::PoisonedLock(format!("Stream mutex read: {}", e)),
-                    );
-                    self.disconnect();
-                    return;
-                }
-            };
+            let mut stream = self.stream.lock();
             stream.read(buffer.as_mut())
         };
 
@@ -572,12 +505,11 @@ impl<H: NetworkHandler> TcpConnectionHandler<H> {
     }
 
     fn disconnect(&self) {
-        if let Some(conn) = self.connections.remove(&self.conn_id.as_u64()) {
+        if let Some(conn) = self.connections.remove(&self.conn_id) {
             self.connection_counter.fetch_sub(1, Ordering::SeqCst);
             if let Some(event_loop) = self.event_loop.upgrade() {
-                if let Ok(mut stream) = conn.val().stream.lock() {
-                    let _ = event_loop.deregister(&mut *stream, conn.val().token);
-                }
+                let mut stream = conn.val().stream.lock();
+                let _ = event_loop.deregister(&mut *stream, conn.val().token);
             }
 
             if let Err(e) = self.handler.on_disconnect(&self.context, self.conn_id) {
@@ -634,13 +566,7 @@ impl<H: NetworkHandler> TcpClient<H> {
             context: self.context.clone(),
         };
 
-        let mut stream_guard = self.stream.lock().map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::Other,
-                format!("Client stream mutex poisoned: {}", e),
-            )
-        })?;
-
+        let mut stream_guard = self.stream.lock();
         let stream = stream_guard
             .as_mut()
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "TCP stream is None"))?;
@@ -658,43 +584,17 @@ impl<H: NetworkHandler> TcpClient<H> {
     }
 
     pub fn send(&self, data: &[u8]) -> Result<()> {
-        if let Ok(mut stream_guard) = self.stream.lock() {
-            if let Some(stream) = stream_guard.as_mut() {
-                stream.write_all(data)?;
-            }
+        let mut stream_guard = self.stream.lock();
+        if let Some(stream) = stream_guard.as_mut() {
+            stream.write_all(data)?;
         }
         Ok(())
     }
 
     pub fn disconnect(&self) -> Result<()> {
-        if let Ok(mut stream_guard) = self.stream.lock() {
-            *stream_guard = None;
-        }
+        *self.stream.lock() = None;
         self.handler.on_disconnect(&self.context, self.conn_id)?;
         Ok(())
-    }
-}
-
-impl<H: NetworkHandler> ServerOperations for TcpClient<H> {
-    fn send_to(&self, conn_id: ConnectionId, data: &[u8]) -> Result<()> {
-        if conn_id == self.conn_id {
-            self.send(data)
-        } else {
-            Ok(())
-        }
-    }
-
-    fn broadcast(&self, _data: &[u8]) -> Result<()> {
-        // No-op for a client
-        Ok(())
-    }
-
-    fn close_connection(&self, _event_loop: &EventLoop, conn_id: ConnectionId) -> Result<()> {
-        if conn_id == self.conn_id {
-            self.disconnect()
-        } else {
-            Ok(())
-        }
     }
 }
 
@@ -729,18 +629,7 @@ impl<H: NetworkHandler> TcpClientHandler<H> {
         let mut buffer: PooledObject<Vec<u8>> = self.buffer_pool.acquire();
 
         let read_result = {
-            let mut stream_guard = match self.stream.lock() {
-                Ok(s) => s,
-                Err(e) => {
-                    self.handler.on_error(
-                        &self.context,
-                        Some(self.conn_id),
-                        NetworkError::PoisonedLock(format!("Client stream mutex read: {}", e)),
-                    );
-                    self.disconnect();
-                    return;
-                }
-            };
+            let mut stream_guard = self.stream.lock();
             if let Some(stream) = stream_guard.as_mut() {
                 stream.read(buffer.as_mut())
             } else {
@@ -784,17 +673,7 @@ impl<H: NetworkHandler> TcpClientHandler<H> {
     }
 
     fn disconnect(&self) {
-        let mut stream_guard = match self.stream.lock() {
-            Ok(s) => s,
-            Err(e) => {
-                self.handler.on_error(
-                    &self.context,
-                    Some(self.conn_id),
-                    NetworkError::PoisonedLock(format!("Client stream mutex disconnect: {}", e)),
-                );
-                e.into_inner()
-            }
-        };
+        let mut stream_guard = self.stream.lock();
 
         if let Some(stream) = stream_guard.as_mut() {
             if let Some(event_loop) = self.event_loop.upgrade() {
