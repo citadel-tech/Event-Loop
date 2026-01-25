@@ -4,7 +4,7 @@ resolver = "2"
 
 [workspace.package]
 version = "2.0.1"
-authors = ["Citadel-tech", "Mohamed Emad <hulxxv@gmail.com>"]
+authors = ["Citadel-tech", "Mohamed Emad"]
 license = "Apache-2.0"
 edition = "2021"
 rust-version = "1.70"
