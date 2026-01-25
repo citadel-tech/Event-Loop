@@ -10,7 +10,7 @@ use super::ServerContext;
 ///
 /// ConnectionIds are used to target specific connections for operations like sending
 /// data or closing connections.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ConnectionId(pub u64);
 
 impl ConnectionId {

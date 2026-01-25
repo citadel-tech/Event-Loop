@@ -2,13 +2,15 @@
 use std::sync::mpmc as channel;
 #[cfg(not(feature = "unstable-mpmc"))]
 use std::sync::mpsc as channel;
+
+use parking_lot::{Condvar, Mutex};
 use std::{
     cmp::Ordering as CmpOrdering,
     collections::BinaryHeap,
     panic::{catch_unwind, AssertUnwindSafe},
     sync::{
         atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
-        Arc, Barrier, Condvar, Mutex,
+        Arc, Barrier,
     },
     thread::{Builder, JoinHandle},
     time::Instant,
@@ -250,11 +252,11 @@ impl ComputeThreadPool {
 
                     loop {
                         let task = {
-                            let mut queue = state_clone.queue.lock().unwrap();
+                            let mut queue = state_clone.queue.lock();
 
                             while queue.is_empty() && !state_clone.shutdown.load(Ordering::Relaxed)
                             {
-                                queue = state_clone.condvar.wait(queue).unwrap();
+                                state_clone.condvar.wait(&mut queue);
                             }
 
                             if state_clone.shutdown.load(Ordering::Relaxed) && queue.is_empty() {
@@ -346,7 +348,7 @@ impl ComputeThreadPool {
                 .fetch_add(1, Ordering::Relaxed),
         };
 
-        let mut queue = self.state.queue.lock().unwrap();
+        let mut queue = self.state.queue.lock();
         queue.push(priority_task);
         self.state.condvar.notify_one();
     }

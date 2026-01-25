@@ -12,5 +12,8 @@ rust-version = "1.70"
 [workspace.dependencies]
 mio = { version = "1.1.0", features = ["os-poll", "net"] }
 lock_freedom = "0.1.1"
+criterion = { version = "0.5.1", features = ["html_reports"] }
+parking_lot = "0.12"
 
 mill-io = { path = "mill-io" }
+mill-net = { path = "mill-net" }

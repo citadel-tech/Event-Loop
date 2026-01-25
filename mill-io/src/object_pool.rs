@@ -1,8 +1,9 @@
+use parking_lot::Mutex;
 #[cfg(feature = "unstable-mpmc")]
 use std::sync::mpmc as channel;
 #[cfg(not(feature = "unstable-mpmc"))]
 use std::sync::mpsc as channel;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 const IO_BUFFER_SIZE: usize = 8192;
 
 #[derive(Clone)]
@@ -34,7 +35,7 @@ impl<T: Send + 'static> ObjectPool<T> {
 
     pub fn acquire(&self) -> PooledObject<T> {
         let mut object = {
-            let receiver = self.receiver.lock().unwrap();
+            let receiver = self.receiver.lock();
             match receiver.try_recv() {
                 Ok(obj) => obj,
                 Err(channel::TryRecvError::Empty) => (self.create_fn)(),
